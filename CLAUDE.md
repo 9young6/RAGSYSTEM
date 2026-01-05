@@ -4,30 +4,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a RAG (Retrieval-Augmented Generation) Knowledge Base System with document management, admin review workflow, and vector search capabilities. The system allows users to upload PDF/DOCX documents, which go through a confirmation and approval process before being indexed into Milvus for semantic search and LLM-powered querying.
+This is a **Multi-Tenant RAG (Retrieval-Augmented Generation) Knowledge Base System** with document management, MinerU-powered Markdown conversion, admin review workflow, and per-user vector search capabilities. Each user has an isolated knowledge base, while administrators can access all users' data.
 
-**Core workflow**: Upload (PDF/DOCX) → Parse & Preview → User Confirmation → Admin Review (approve/reject) → Index to Milvus → Query with Ollama
+**Core workflow (Multi-Tenant)**:
+- **User**: Upload (PDF/DOCX) → MinerU converts to Markdown → Download & Edit Markdown → Upload edited Markdown → Admin Review → Index to user's Milvus partition → Query own knowledge base
+- **Admin**: Review all users' documents → Approve/Reject → Query across any user's knowledge base or all knowledge bases
 
 ## Architecture
 
 ### Stack
 - **Backend**: FastAPI (Python) - `/backend`
 - **Frontend**: Static HTML/JS/CSS - `/frontend`
-- **Database**: PostgreSQL (metadata, user data, document records)
-- **Vector DB**: Milvus (document embeddings and chunks)
-- **Object Storage**: MinIO (original document files)
+- **Database**: PostgreSQL (metadata, user data, document records with owner_id)
+- **Vector DB**: Milvus with per-user partitions (user_1, user_2, etc.)
+- **Object Storage**: MinIO with per-user directories (user_{id}/documents/, user_{id}/markdown/)
 - **LLM**: Ollama (local LLM for generation and embeddings)
-- **Caching**: Redis (optional, configured but not heavily used)
+- **Task Queue**: Celery + Redis (for async MinerU document conversion)
+- **Document Converter**: MinerU (high-quality PDF→Markdown conversion)
 
 ### Service Dependencies
 All services run in Docker containers orchestrated by docker-compose:
 - `postgres` - PostgreSQL database
-- `redis` - Redis cache
+- `redis` - Redis cache + Celery broker
 - `etcd` - Required by Milvus
-- `milvus` - Vector database
+- `milvus` - Vector database with multi-tenant partitions
 - `minio` - S3-compatible object storage
 - `ollama` - Local LLM service
 - `backend` - FastAPI application (port 8001→8000)
+- `celery_worker` - Celery worker for MinerU conversion tasks
 - `frontend` - Nginx serving static files (port 3000)
 
 ### Backend Structure
@@ -42,37 +46,45 @@ backend/
 │   ├── api/                  # FastAPI route handlers
 │   │   ├── router.py         # Main router aggregation
 │   │   ├── auth.py           # Login, register endpoints
-│   │   ├── documents.py      # Upload, confirm, list documents
-│   │   ├── review.py         # Admin: approve/reject, pending list
-│   │   ├── query.py          # RAG query endpoint
+│   │   ├── documents.py      # Upload, Markdown download/upload, list (owner-filtered)
+│   │   ├── review.py         # Admin: approve/reject, pending list (all users)
+│   │   ├── query.py          # RAG query (user's partition) + admin cross-query
 │   │   ├── health.py         # Health check endpoint
-│   │   └── deps.py           # Dependency injection (get_db, get_current_user, etc.)
+│   │   └── deps.py           # Dependency injection (get_db, get_current_user, require_admin)
 │   ├── models/               # SQLAlchemy ORM models
 │   │   ├── user.py
-│   │   ├── document.py
+│   │   ├── document.py       # owner_id, markdown_path, markdown_status fields
 │   │   ├── document_chunk.py
 │   │   └── review_action.py
 │   ├── schemas/              # Pydantic request/response models
 │   ├── services/             # Business logic
 │   │   ├── auth_service.py       # JWT token generation/validation
-│   │   ├── document_parser.py    # PDF/DOCX parsing
+│   │   ├── document_parser.py    # PDF/DOCX parsing (may be replaced by MinerU)
 │   │   ├── text_splitter.py      # Chunk text for indexing
 │   │   ├── embedding_service.py  # Generate embeddings (hash/ollama/sentence-transformers)
-│   │   ├── milvus_service.py     # Vector DB operations
-│   │   ├── minio_service.py      # File upload/download
+│   │   ├── milvus_service.py     # Vector DB operations with partition support
+│   │   ├── minio_service.py      # File upload/download with user isolation
 │   │   ├── llm_service.py        # Ollama API client
-│   │   └── rag_service.py        # RAG workflow: retrieve + generate
+│   │   └── rag_service.py        # RAG workflow: retrieve + generate (partition-aware)
 │   └── utils/
 │       ├── init_db.py            # Create default admin user
 │       └── init_milvus.py        # Create Milvus collections
+├── tasks/                     # Celery tasks (NEW)
+│   ├── celery_app.py         # Celery application configuration
+│   └── mineru_tasks.py       # MinerU PDF→Markdown conversion tasks
 ```
 
 ### Database Schema
 
 **Key Tables**:
 - `users`: User accounts (username, hashed_password, role)
-- `documents`: Document metadata (filename, status, minio_object, sha256, uploader_id, reviewer_id, timestamps)
-  - Stores MinIO object path (`minio_bucket`, `minio_object`) for original file
+- `documents`: Document metadata with multi-tenant support
+  - **NEW**: `owner_id` - Foreign key to users table (multi-tenant isolation)
+  - **NEW**: `markdown_path` - Path to converted Markdown in MinIO
+  - **NEW**: `markdown_status` - Status of MinerU conversion (pending/processing/markdown_ready/failed)
+  - **NEW**: `markdown_error` - Error message if conversion failed
+  - Existing: filename, status, minio_object, sha256, uploader_id, reviewer_id, timestamps
+  - Stores MinIO object paths: `minio_bucket`, `minio_object` (original), `markdown_path` (converted)
   - Tracks document lifecycle with timestamps: `created_at`, `confirmed_at`, `reviewed_at`, `indexed_at`
   - `preview_text` stores first few chunks for UI preview
 - `document_chunks`: Text chunks from approved documents (document_id, chunk_index, content, char_count)
@@ -82,18 +94,50 @@ backend/
 
 **Relationships**:
 - Documents have `uploader` (User) and `reviewer` (User) foreign keys
+- **Documents have `owner` (User) foreign key for multi-tenant isolation**
 - Documents have one-to-many relationship with `document_chunks` (cascade delete)
 
-### Document Status Flow
+**Indexes (Important for Multi-Tenant)**:
+```sql
+CREATE INDEX idx_documents_owner_id ON documents(owner_id);
+CREATE INDEX idx_documents_markdown_status ON documents(markdown_status);
+CREATE INDEX idx_documents_status_owner ON documents(status, owner_id);
+```
 
-Documents transition through states stored in `documents.status`:
-1. `uploaded` - Initial state after upload
-2. `confirmed` - User confirmed the preview
-3. `approved` - Admin approved, indexing initiated
-4. `indexed` - Chunks successfully indexed to Milvus (terminal success state)
+### Document Status Flow (Multi-Tenant with MinerU)
+
+Documents transition through states stored in `documents.status` and `markdown_status`:
+
+**Main Status Flow**:
+1. `uploaded` - Initial state after upload (triggers MinerU conversion)
+2. `confirmed` - User confirmed after reviewing/editing Markdown
+3. `approved` - Admin approved, indexing initiated to user's partition
+4. `indexed` - Chunks successfully indexed to user's Milvus partition (terminal success state)
 5. `rejected` - Admin rejected (terminal failure state)
 
-**Note**: The approval endpoint (`POST /api/v1/review/approve/{id}`) sets status to `approved`, then calls `RAGService().index_document()` which updates it to `indexed` upon successful completion. If indexing fails, the document remains in `approved` state. Check backend logs for errors.
+**Markdown Status Flow** (parallel to main status):
+1. `pending` - Awaiting MinerU conversion (set on upload)
+2. `processing` - MinerU Celery task running
+3. `markdown_ready` - Conversion successful, ready for user download/edit
+4. `failed` - Conversion failed (check `markdown_error` field)
+
+**Combined Workflow**:
+```
+Upload → uploaded + markdown_status=pending
+       → Celery task triggered
+       → markdown_status=processing
+       → markdown_status=markdown_ready (user can download/edit)
+       → User uploads edited MD → confirmed
+       → Admin approves → approved
+       → Index to user's Milvus partition → indexed
+```
+
+**Note**: The approval endpoint (`POST /api/v1/review/approve/{id}`) sets status to `approved`, then calls `RAGService().index_document()` which:
+1. Uses the edited Markdown content (from `markdown_path`) instead of raw PDF text
+2. Indexes to the user's partition (`user_{owner_id}`)
+3. Updates status to `indexed` upon successful completion
+
+If indexing fails, the document remains in `approved` state. Check backend logs for errors.
 
 The `review_actions` table logs all admin approval/rejection actions.
 
@@ -134,6 +178,33 @@ docker compose exec backend bash
 View backend logs:
 ```bash
 docker compose logs -f backend
+```
+
+### Celery Worker Management (NEW)
+
+View Celery worker logs:
+```bash
+docker compose logs -f celery_worker
+```
+
+Restart Celery worker:
+```bash
+docker compose restart celery_worker
+```
+
+Monitor active Celery tasks:
+```bash
+docker compose exec celery_worker celery -A tasks.celery_app inspect active
+```
+
+Check MinerU conversion queue:
+```bash
+docker compose exec celery_worker celery -A tasks.celery_app inspect reserved
+```
+
+Manually trigger MinerU conversion for a document:
+```bash
+docker compose exec backend python -c "from tasks.mineru_tasks import convert_to_markdown; convert_to_markdown.delay(document_id=1)"
 ```
 
 ### Database Migrations
@@ -180,7 +251,7 @@ Test Ollama directly:
 docker compose exec ollama ollama run qwen2.5:32b "Hello"
 ```
 
-### Milvus Operations
+### Milvus Operations (Multi-Tenant)
 
 Access Milvus container:
 ```bash
@@ -189,7 +260,33 @@ docker compose exec milvus bash
 
 The Milvus collection is auto-created on backend startup via `init_milvus.py`.
 
-Recreate Milvus collection (WARNING: deletes all indexed data):
+**List all user partitions**:
+```bash
+docker compose exec backend python -c "from app.services.milvus_service import MilvusService; m=MilvusService(); print(m.collection.partitions)"
+```
+
+**Create partition for a new user**:
+```bash
+docker compose exec backend python -c "from app.services.milvus_service import MilvusService; m=MilvusService(); m.create_partition('user_123')"
+```
+
+**Query specific user's partition**:
+```bash
+docker compose exec backend python -c "
+from app.services.milvus_service import MilvusService
+m = MilvusService()
+# Search in user_1's partition only
+results = m.collection.search(
+    data=[[0.1, 0.2, ...]],  # query vector
+    anns_field='embedding',
+    partition_names=['user_1'],
+    limit=5
+)
+print(results)
+"
+```
+
+Recreate Milvus collection (WARNING: deletes all indexed data and partitions):
 ```bash
 docker compose exec backend python -c "from app.services.milvus_service import MilvusService; m=MilvusService(); m.drop_collection(); m.ensure_collection()"
 ```
@@ -230,6 +327,16 @@ All configuration is in `.env` (see `.env.example` for template).
 - Backend is mapped `8001:8000` on host to avoid conflicts (change in `docker-compose.yml` if needed)
 - Frontend is on port `3000`
 
+**Celery Configuration (NEW)**:
+- `CELERY_BROKER_URL`: Redis URL for task queue (default: `redis://redis:6379/0`)
+- `CELERY_RESULT_BACKEND`: Redis URL for task results (default: `redis://redis:6379/0`)
+- Celery worker runs in separate container (`celery_worker`)
+
+**MinerU Configuration (NEW)**:
+- MinerU models are cached in Docker volume `mineru_models`
+- First conversion will download models (may take time)
+- GPU acceleration optional (uncomment GPU config in `docker-compose.yml`)
+
 **Default Admin**:
 - Username: `admin`
 - Password: `admin123`
@@ -237,38 +344,58 @@ All configuration is in `.env` (see `.env.example` for template).
 
 ## Key Implementation Details
 
-### Document Upload Flow
+### Document Upload Flow (Multi-Tenant with MinerU)
 1. User uploads file via `POST /api/v1/documents/upload`
-2. File saved to MinIO, parsed (PDF/DOCX), text extracted
-3. Text split into chunks, preview returned to user
-4. Document saved with status `uploaded`
-5. User confirms via `POST /api/v1/documents/confirm/{id}` → status becomes `confirmed`
-6. Admin reviews via `POST /api/v1/review/approve/{id}` or `reject/{id}`
-7. On approval:
-   - Status set to `approved`
-   - Full document text is parsed from MinIO
-   - Text is split into chunks (stored in `document_chunks` table)
-   - Chunks are embedded using the configured embedding provider
-   - Embeddings are indexed to Milvus (with document_id and chunk_index as metadata)
-   - Status becomes `indexed`
-8. On indexing failure: document remains in `approved` status. Check backend logs for errors.
-   Common failures: Milvus connection issues, embedding service errors, file parsing errors.
+2. File saved to MinIO at `user_{owner_id}/documents/{uuid}/{filename}` (user isolation)
+3. Document record created with `owner_id=current_user.id`, `status=uploaded`, `markdown_status=pending`
+4. **Celery task triggered**: `convert_to_markdown.delay(document_id)`
+5. MinerU converts PDF→Markdown asynchronously:
+   - Downloads original file from MinIO
+   - Runs MinerU conversion
+   - Saves Markdown to MinIO at `user_{owner_id}/markdown/{document_id}.md`
+   - Updates `markdown_status=markdown_ready` or `failed`
+6. User polls `GET /documents/{id}/status` to check conversion status
+7. User downloads Markdown via `GET /documents/{id}/markdown/download`
+8. User edits Markdown locally, then uploads via `POST /documents/{id}/markdown/upload`
+9. Document status becomes `confirmed` after Markdown upload
+10. Admin reviews via `POST /api/v1/review/approve/{id}` or `reject/{id}`
+11. On approval:
+    - Status set to `approved`
+    - Markdown content is loaded from MinIO (not raw PDF text)
+    - Text is split into chunks (stored in `document_chunks` table)
+    - Chunks are embedded using the configured embedding provider
+    - Embeddings are indexed to **user's Milvus partition** (`user_{owner_id}`)
+    - Status becomes `indexed`
+12. On indexing failure: document remains in `approved` status. Check backend logs for errors.
+    Common failures: Milvus connection issues, embedding service errors, partition creation errors.
 
-### RAG Query Flow
+### RAG Query Flow (Multi-Tenant)
 1. User query via `POST /api/v1/query`
 2. Query text is embedded using same embedding provider as documents
-3. Top-k similar chunks retrieved from Milvus
+3. Top-k similar chunks retrieved from **user's Milvus partition only** (`partition_names=[f"user_{current_user.id}"]`)
 4. Retrieved chunks + query sent to Ollama LLM
 5. LLM generates answer based on context
 6. If Ollama model unavailable, falls back to returning raw chunks
 
 **Note**: The default RAG prompt template (`app/utils/prompt_templates.py`) is in Chinese. To customize the prompt language or instructions, modify `RAG_PROMPT_TEMPLATE`.
 
-### Authentication
+### Authentication & Multi-Tenant Permissions
 - JWT-based authentication
 - Tokens obtained via `POST /api/v1/auth/login` or `POST /api/v1/auth/register`
 - Token required for most endpoints via `Authorization: Bearer <token>` header
-- Admin-only endpoints require `role=admin` in user record
+- **Role-based access**: `user` (普通用户) vs `admin` (管理员)
+
+**Permission Matrix**:
+
+| Operation | User | Admin |
+|-----------|------|-------|
+| Upload documents | ✅ To own library | ✅ To own library |
+| List documents | ✅ Own only | ✅ All users (with `?user_id=X`) |
+| Download Markdown | ✅ Own only | ✅ Any user's |
+| Upload edited Markdown | ✅ Own only | ✅ To any library |
+| Review documents | ❌ | ✅ All users' documents |
+| Query knowledge base | ✅ Own partition | ✅ Any partition or all (`/query/admin`) |
+| Delete documents | ✅ Own only | ✅ Any user's |
 
 **Token Usage Example**:
 ```bash
@@ -282,6 +409,39 @@ curl http://localhost:8001/api/v1/documents/upload \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@document.pdf"
 ```
+
+### Multi-Tenant API Endpoints (NEW)
+
+**Document Management** (owner-filtered):
+- `GET /api/v1/documents` - List user's own documents (admin can add `?user_id=X`)
+- `GET /api/v1/documents/{id}/status` - Check MinerU conversion status
+- `GET /api/v1/documents/{id}/markdown/download` - Download converted Markdown
+- `POST /api/v1/documents/{id}/markdown/upload` - Upload edited Markdown
+
+**Admin Cross-Query**:
+- `POST /api/v1/query/admin` - Query specific user's library or all libraries
+  ```json
+  {
+    "query": "Python异步编程",
+    "user_id": 123,  // Optional: specific user, omit for all users
+    "top_k": 5
+  }
+  ```
+
+**User Statistics** (admin only):
+- `GET /api/v1/users` - List all users
+- `GET /api/v1/users/{id}/stats` - User's knowledge base statistics
+  ```json
+  {
+    "user_id": 123,
+    "username": "alice",
+    "total_documents": 45,
+    "indexed_documents": 42,
+    "pending_review": 2,
+    "rejected": 1,
+    "storage_used_mb": 125.3
+  }
+  ```
 
 ### Embedding Service
 The `embedding_service.py` supports three providers:
@@ -354,6 +514,55 @@ docker compose exec backend python -c "from app.services.minio_service import Mi
 ```
 
 **Frontend can't reach backend**: Ensure CORS_ORIGINS in `.env` includes frontend origin. For development, `["*"]` allows all origins.
+
+**MinerU conversion stuck in `processing`** (NEW): Check Celery worker status:
+```bash
+docker compose logs celery_worker | grep -i error
+# Check active tasks
+docker compose exec celery_worker celery -A tasks.celery_app inspect active
+# Restart worker
+docker compose restart celery_worker
+```
+
+**MinerU conversion failed** (NEW): Document has `markdown_status=failed`. Check error:
+```bash
+docker compose exec postgres psql -U admin -d knowledge_base -c "SELECT id, filename, markdown_error FROM documents WHERE markdown_status='failed';"
+# Retry conversion manually
+docker compose exec backend python -c "from tasks.mineru_tasks import convert_to_markdown; convert_to_markdown.delay(document_id=1)"
+```
+
+**MinerU models not downloading** (NEW): First conversion downloads models (GB-sized):
+```bash
+# Check download progress in worker logs
+docker compose logs -f celery_worker
+# Models cached in volume mineru_models
+docker volume inspect ragsystem_mineru_models
+```
+
+**User can't see their documents** (NEW): Check owner_id filtering:
+```bash
+docker compose exec postgres psql -U admin -d knowledge_base -c "SELECT id, filename, owner_id, status FROM documents WHERE owner_id=1;"
+# Verify user ID in JWT token
+docker compose exec backend python -c "import jwt; print(jwt.decode('YOUR_TOKEN', options={'verify_signature': False}))"
+```
+
+**Milvus partition not found** (NEW): User partition may not be created:
+```bash
+# List all partitions
+docker compose exec backend python -c "from app.services.milvus_service import MilvusService; print(MilvusService().collection.partitions)"
+# Create missing partition
+docker compose exec backend python -c "from app.services.milvus_service import MilvusService; MilvusService().create_partition('user_1')"
+```
+
+**Admin can't query across users** (NEW): Use admin endpoint, not regular query:
+```bash
+# Wrong: POST /api/v1/query (only queries admin's own partition)
+# Correct: POST /api/v1/query/admin with optional user_id parameter
+curl -X POST http://localhost:8001/api/v1/query/admin \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test", "user_id": null}'  # null = all users
+```
 
 ## Design Patterns
 
