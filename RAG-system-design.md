@@ -1574,7 +1574,15 @@ async function adminQuery(query, userId = null) {
 }
 ```
 
----
+
+## 🎨 前端体验改进计划（RAGFlow 风格）
+- **信息架构**：保留登录页 + 主应用（Header / Sidebar / Main）双页结构，突出多租户身份（用户名、角色）、清晰的页面分区（我的知识库、上传、查询、审核、设置占位）。
+- **知识库视图**：表格式列表，支持分页、状态筛选、状态徽标（文档+Markdown）、单选/批量删除，展示大小/时间/所属用户（管理员视角）。
+- **上传与 Markdown**：拖拽/点击选择、体积/格式校验、上传后自动转换为 Markdown（可轮询状态）、失败可“开始/重试转换”、Markdown 下载/二次上传、确认提交流程，状态提示友好化。
+- **查询与审核**：查询页支持模型选择、TopK、Temperature 输入并展示置信度；审核页卡片式待审列表，管理员可通过/拒绝并记录理由。
+- **设置与健康**：在顶栏/侧栏保留设置入口，展示 API 基础地址、当前角色、可用的 Ollama 模型（复用 /health 结果）。
+- **验收审查**：上传“验收报告/检查报告”→选择审查范围（本人/指定用户/全库，管理员可选）→生成固定格式的“验收审查报告”并支持下载。
+- **测试覆盖**：使用 `scripts/sdk_smoke_test.py` 验证注册/登录→上传→确认→审核→索引→查询全链路；补充分支测试（Markdown 下载/上传、批量删除、管理员跨租户审核/查询）。
 
 ## 🎯 总结
 
@@ -1598,3 +1606,171 @@ async function adminQuery(query, userId = null) {
 5. **可扩展架构**：支持大量并发用户和文档
 
 现在你可以直接使用这个架构开始实施，或与开发团队沟通具体的功能改进需求。
+
+---
+
+## Chunk / Milvus 内容管理（新增需求，RAGFlow 风格）
+
+### 需求概述
+- 在“我的知识库”中，点击某份文档即可查看该文档切分后的 Chunk 列表。
+- 支持对 Chunk 进行增删改查（新增、编辑、删除、查看），并同步更新 Milvus 中对应向量（对 Milvus 的内容 CRUD 通过后端受控接口完成）。
+- 管理员可在前端选择任意用户知识库，进入后对该用户的文档与 Chunk 执行同样的增删改查。
+- 前端不内置/不展示管理员账号密码；管理员通过正常登录获得权限。
+
+### 权限规则
+- 普通用户：仅可操作自己 `owner_id` 下的文档与 Chunk。
+- 管理员：可操作任意用户文档与 Chunk；并支持“选择用户”进行聚焦管理。
+
+### 一致性规则（SQL 为准）
+- `document_chunks` 作为内容源：Chunk 文本保存在 PostgreSQL；Milvus 仅作为检索向量索引。
+- Milvus 更新采用 `delete + insert`（不依赖 Milvus 原地 update）。
+- 发生不一致时提供“重建向量”接口：删除该文档在 Milvus 的向量并按 SQL chunk 重新写入。
+
+### API 规划（后端受控，避免前端直连 Milvus）
+- `GET /api/v1/admin/users`（管理员：获取用户列表用于前端点击选择）
+- `GET /api/v1/documents?owner_id=...`（管理员：按 owner 过滤文档；普通用户禁止该参数）
+- `GET /api/v1/documents/{document_id}/chunks`
+- `POST /api/v1/documents/{document_id}/chunks`（新增 chunk，默认追加到末尾）
+- `PATCH /api/v1/documents/{document_id}/chunks/{chunk_id}`（编辑 chunk，默认同步向量）
+- `DELETE /api/v1/documents/{document_id}/chunks/{chunk_id}`
+- `POST /api/v1/documents/{document_id}/chunks/reembed`（重建该文档向量）
+
+---
+
+## 用户级配置与连通性测试（新增需求）
+
+### 设计原则
+- **全局配置（.env）**：影响数据结构/存储一致性的参数（如 Embedding 维度、Milvus collection、后端 Ollama Base URL 等）保持为服务端全局配置，不允许普通用户在前端随意改动，避免导致数据不一致或 Milvus 崩溃。
+- **用户级配置（User Settings）**：与“查询体验/默认参数”相关的配置允许每个用户独立设置（例如默认模型、默认 top_k、默认 temperature），并在前端设置页进行修改与保存。
+- **可验证**：用户修改后可一键“测试连通性”，验证后端 API、Ollama LLM 与 embedding 是否可用。
+
+### 用户级可配置项（建议首批）
+- 查询默认值
+  - `default_llm_provider`（默认推理后端：`ollama | vllm | xinference`）
+  - `default_llm_model`（默认 LLM 模型）
+  - `default_top_k`（默认召回数）
+  - `default_temperature`（默认温度）
+- （后续可扩展）提示词模板、引用格式、重排策略等
+
+### API 规划（建议）
+- `GET /api/v1/settings/me`：获取当前用户配置（不存在则返回默认值）
+- `PUT /api/v1/settings/me`：更新当前用户配置
+- `POST /api/v1/diagnostics/inference`：按用户选择的推理后端 + 模型测试连通性（Ollama / vLLM / Xinference）
+- `POST /api/v1/diagnostics/rerank`：测试 Rerank 后端连通性（可选）
+
+### 前端行为
+- “设置”页展示当前用户配置，支持保存。
+- “查询”页进入时自动使用用户配置填充默认值。
+- “测试连通性”按钮：调用后端诊断 API，显示模型是否存在、embedding 向量维度、LLM 返回摘要等。
+- 当 `default_llm_provider != ollama` 时，模型名称支持手动输入（不依赖 Ollama tags）。
+
+---
+
+## 常用文件类型支持（新增需求）
+
+### 目标
+系统不仅支持 PDF/DOCX，还应支持常见的“文本类/结构化类”文件，保证知识库通用性：
+- 文本/标记：`txt`、`md/markdown`
+- 结构化：`json`、`csv`
+- 表格：`xlsx`（基础解析为文本/Markdown）
+
+### 转换与索引策略
+- 对于 `md/txt/json/csv/xlsx`：可不依赖 MinerU，直接在后端生成 Markdown（或提取文本）并存入 MinIO `markdown/`，将 `markdown_status` 置为 `markdown_ready`，保证后续审批索引链路一致。
+- 对于 `pdf/docx`：优先 MinerU 转换；失败时使用后端 fallback 提取文本并生成 Markdown。
+- 转换状态机：`pending/processing/markdown_ready/failed`；前端上传后自动触发转换，并在失败或待转换时提供“开始/重试转换”按钮。
+
+### 前端上传
+- 上传组件需要允许选择上述文件类型，并更新提示文案。
+
+---
+
+## 审核升级：Chunk 级别审核与“部分入库”
+
+### 背景
+当前“审核”以文档为粒度，一旦审批即把整份文档的所有 chunk 写入 Milvus。为了更接近 RAGFlow 的管理体验，需要让管理员在入库前查看全部 chunk，并选择部分 chunk 入库。
+
+### 目标
+- 管理员在“审核”页面可：
+  - 查看待审文档的全部 chunk（来源于转换后的 Markdown）
+  - 勾选/取消勾选 chunk 的“入库”开关
+  - 可选：直接编辑 chunk 文本（修正 OCR/解析错误）
+  - 对整份文档“全部入库”或“部分入库”
+- 普通用户在“我的知识库/上传”中可查看转换后的 chunk（不涉及入库权限）。
+
+### 实现要点
+- `document_chunks` 增加字段：`included`（bool，默认 true）
+  - `included=true`：允许写入 Milvus 并参与检索
+  - `included=false`：仅保留在 SQL 中，不写入 Milvus
+- chunk 生成时机：
+  - 当 Markdown 转换完成（`markdown_ready`）即生成 chunk 并写入 `document_chunks`
+  - 用户上传新的 Markdown 后重新生成 chunk（重置 included=true）
+- 入库时机：
+  - 管理员审批时，仅对 `included=true` 的 chunk 生成 embedding 并写入 Milvus 分区
+
+### API 规划（建议）
+- `GET /api/v1/review/pending`：待审文档列表（包含 chunk_count、markdown_status）
+- `GET /api/v1/documents/{document_id}/chunks`：查看 chunk（管理员可看任意文档，用户仅看自己）
+- `PATCH /api/v1/documents/{document_id}/chunks/{chunk_id}`：支持更新 `content` 与 `included`（入库前仅更新 SQL；入库后可选同步 Milvus）
+- `POST /api/v1/review/approve/{document_id}`：入库时仅写入 included=true
+
+---
+
+## 检索增强：可选 Rerank（以及 vLLM / Xinference 配置）
+
+### 目标
+- 检索链路：Milvus 召回 TopK →（可选）Rerank → 构建上下文 → LLM 生成答案
+- 如果未配置 rerank，则前端不展示 rerank 选项或默认关闭
+- 支持配置推理后端（Ollama / vLLM / Xinference），并提供“连通性测试”
+
+### 配置分层
+- 服务端全局（.env）：推理服务 base_url、API key（如需）
+- 用户级（User Settings）：默认 LLM 模型、默认 top_k/temperature、是否启用 rerank、rerank 模型
+
+### Rerank 提案（首批）
+- `rerank_provider = none | xinference`
+  - `xinference`：调用 Xinference Rerank HTTP API 对召回片段打分重排
+
+---
+
+## 知识库“验收/审查”功能（新增大功能）
+
+### 场景
+用户上传一份“验收报告/检查报告”，系统需要：
+1) 根据报告名称（及报告内容摘要）在知识库里检索出相关“要求/标准/条款”的 chunk
+2) 将这些 chunk 作为依据，让大模型对报告内容进行审查
+3) 生成一份固定格式的“审查结果报告”，指出是否合格、问题点、证据引用（chunk 引用）
+
+### 输出格式（建议：Markdown 固定模板）
+```
+# 验收审查报告
+
+## 基本信息
+- 报告名称：
+- 报告文档ID：
+- 审查时间：
+- 审查范围：本人知识库 / 指定用户 / 全库（管理员）
+- 使用模型：
+
+## 结论
+- 是否合格：合格 / 不合格 / 需补充材料
+- 结论摘要：
+
+## 发现的问题（如有）
+1. 问题描述：
+   - 依据条款（引用 chunk）：
+   - 报告证据（引用报告段落）：
+   - 风险/影响：
+   - 建议整改：
+
+## 依据条款（TopN）
+- [document_id:chunk_index] chunk 内容摘要...
+```
+
+### API 规划（建议）
+- `POST /api/v1/acceptance/run`
+  - 入参：`report_document_id`、`model`、`top_k`、`temperature`、（管理员可选）`scope_user_id`
+  - 出参：`report_markdown`、`passed`、`issues[]`、`sources[]`
+
+### 重要约束
+- 验收功能不改变 Milvus/向量结构；只读查询 + 生成报告
+- 引用必须可追溯（chunk 需带上 `[document_id:chunk_index]`）

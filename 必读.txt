@@ -1,0 +1,17 @@
+离线使用说明：OFFLINE_DEPLOYMENT.md (line 1)
+离线 compose 覆盖（禁止拉取/去掉代码挂载/关闭 reload）：docker-compose.offline.yml (line 3)
+导出镜像脚本：export-images.ps1 (line 1)
+导入镜像脚本：import-images.ps1 (line 20)
+已完成的镜像打包产物
+
+目录：offline/images/
+文件：每个镜像一个 *.tar + 校验清单 manifest.json
+内网怎么用（完全不拉新镜像）
+
+把整个项目目录 + offline/images/ 拷到内网机器
+内网导入镜像：import-images.ps1
+内网启动：docker compose -f docker-compose.yml -f docker-compose.offline.yml up -d（见 OFFLINE_DEPLOYMENT.md (line 54)）
+后期维护 + 新增 whl 怎么搞
+
+推荐：外网构建新镜像 → 重新导出对应 tar → 内网导入 → 重启（见 OFFLINE_DEPLOYMENT.md (line 72)）
+应急：内网 docker cp whl + 容器内 pip install + docker commit 固化成新镜像（见 OFFLINE_DEPLOYMENT.md (line 93)）

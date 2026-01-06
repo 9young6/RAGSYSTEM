@@ -1,0 +1,30 @@
+services:
+  redis:
+    pull_policy: never
+
+  postgres:
+    pull_policy: never
+
+  etcd:
+    pull_policy: never
+
+  milvus:
+    pull_policy: never
+
+  minio:
+    pull_policy: never
+
+  backend:
+    pull_policy: never
+    volumes: []
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+
+  celery_worker:
+    pull_policy: never
+    volumes:
+      - mineru_models:/root/.cache/huggingface
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=2
+
+  frontend:
+    pull_policy: never
+

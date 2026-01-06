@@ -1,0 +1,200 @@
+services:
+  redis:
+    image: ${REGISTRY_MIRROR:-docker.m.daocloud.io}/library/redis:7-alpine
+    container_name: kb_redis
+    pull_policy: if_not_present
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kb_network
+
+  postgres:
+    image: ${REGISTRY_MIRROR:-docker.m.daocloud.io}/library/postgres:15-alpine
+    container_name: kb_postgres
+    pull_policy: if_not_present
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secure_password_2024
+      POSTGRES_DB: knowledge_base
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d knowledge_base"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kb_network
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: kb_etcd
+    pull_policy: if_not_present
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+    volumes:
+      - ${ETCD_DATA_VOLUME:-etcd_data}:/etcd
+    command: >
+      etcd
+      --advertise-client-urls=http://etcd:2379
+      --listen-client-urls=http://0.0.0.0:2379
+      --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=localhost:2379", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kb_network
+
+  milvus:
+    image: ${REGISTRY_MIRROR:-docker.m.daocloud.io}/milvusdb/milvus:latest
+    container_name: kb_milvus
+    pull_policy: if_not_present
+    environment:
+      COMMON_STORAGETYPE: local
+      ETCD_ENDPOINTS: etcd:2379
+      COMMON_ETCD_ENDPOINTS: etcd:2379
+    depends_on:
+      etcd:
+        condition: service_healthy
+    volumes:
+      - ${MILVUS_DATA_VOLUME:-milvus_data}:/var/lib/milvus
+    command: milvus run standalone
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - kb_network
+
+  minio:
+    image: ${REGISTRY_MIRROR:-docker.m.daocloud.io}/minio/minio:latest
+    container_name: kb_minio
+    pull_policy: if_not_present
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/minio_data
+    command: server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - kb_network
+
+  ollama:
+    image: ${REGISTRY_MIRROR:-docker.m.daocloud.io}/ollama/ollama:latest
+    container_name: kb_ollama
+    profiles: ["with-ollama"]
+    pull_policy: if_not_present
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - kb_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        REGISTRY_MIRROR: ${REGISTRY_MIRROR:-docker.m.daocloud.io}
+        APT_MIRROR_BASE: ${APT_MIRROR_BASE:-https://mirrors.tuna.tsinghua.edu.cn}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+        PIP_TIMEOUT: ${PIP_TIMEOUT:-1200}
+    container_name: kb_backend
+    image: ragsystem_backend:local
+    ports:
+      - "8001:8000"
+    env_file:
+      - ./.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./backend:/app
+      - ./scripts:/scripts:ro
+    working_dir: /app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - kb_network
+
+  celery_worker:
+    image: ragsystem_backend:local
+    container_name: kb_celery_worker
+    env_file:
+      - ./.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./backend:/app
+      - mineru_models:/root/.cache/huggingface  # MinerU model cache
+    working_dir: /app
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=2
+    networks:
+      - kb_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        REGISTRY_MIRROR: ${REGISTRY_MIRROR:-docker.m.daocloud.io}
+    container_name: kb_frontend
+    image: ragsystem_frontend:local
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - kb_network
+
+volumes:
+  postgres_data:
+  redis_data:
+  milvus_data:
+  milvus_data_bge_m3:
+  etcd_data:
+  etcd_data_bge_m3:
+  minio_data:
+  ollama_data:
+  mineru_models:  # MinerU model cache volume
+
+networks:
+  kb_network:
+    driver: bridge

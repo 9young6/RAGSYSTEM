@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>知识库管理系统</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body class="app-page">
+    <header class="app-header">
+      <div class="header-left">
+        <div class="app-title">知识库管理系统</div>
+        <div class="muted small">Multi-Tenant RAG</div>
+      </div>
+      <div class="header-right">
+        <div class="user-info">
+          <span id="currentUser">-</span>
+          <span class="pill" id="userRole">-</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="logoutBtn" type="button">退出登录</button>
+      </div>
+    </header>
+
+    <aside class="app-sidebar">
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-page="documents">
+          <span class="nav-icon">📚</span>
+          <span>我的知识库</span>
+        </a>
+        <a href="#" class="nav-item" data-page="upload">
+          <span class="nav-icon">⬆️</span>
+          <span>上传文件</span>
+        </a>
+        <a href="#" class="nav-item" data-page="query">
+          <span class="nav-icon">🔎</span>
+          <span>知识库查询</span>
+        </a>
+        <a href="#" class="nav-item" data-page="acceptance">
+          <span class="nav-icon">🧾</span>
+          <span>验收审查</span>
+        </a>
+        <a href="#" class="nav-item admin-only hidden" data-page="review">
+          <span class="nav-icon">✅</span>
+          <span>文档审核</span>
+        </a>
+        <a href="#" class="nav-item" data-page="settings">
+          <span class="nav-icon">⚙️</span>
+          <span>设置</span>
+        </a>
+      </nav>
+    </aside>
+
+    <main class="app-main">
+      <section id="page-documents" class="page active">
+        <div class="page-header">
+          <h2>我的知识库</h2>
+          <div class="page-actions">
+            <button class="btn btn-secondary" id="refreshDocsBtn" type="button">刷新</button>
+            <button class="btn btn-danger" id="batchDeleteBtn" type="button" disabled>批量删除</button>
+          </div>
+        </div>
+
+        <div class="filter-bar card flat">
+          <div class="filter-group">
+            <label for="statusFilter">状态筛选</label>
+            <select id="statusFilter">
+              <option value="">全部</option>
+              <option value="uploaded">已上传</option>
+              <option value="confirmed">已确认</option>
+              <option value="approved">已审批</option>
+              <option value="indexed">已索引</option>
+              <option value="rejected">已拒绝</option>
+            </select>
+          </div>
+          <div class="filter-group admin-only hidden">
+            <label for="ownerFilter">用户筛选</label>
+            <select id="ownerFilter">
+              <option value="">全部用户</option>
+            </select>
+          </div>
+          <div class="filter-info muted">共 <span id="totalDocs">0</span> 个文档</div>
+        </div>
+
+        <div id="documentList"></div>
+        <div class="pagination" id="pagination"></div>
+        <div id="docsMessage" class="message"></div>
+      </section>
+
+      <div class="modal hidden" id="chunkModal" aria-hidden="true">
+        <div class="modal-backdrop" id="chunkModalBackdrop"></div>
+        <div class="modal-panel card" role="dialog" aria-modal="true">
+          <div class="modal-header">
+            <div>
+              <div class="modal-title">Chunk 管理</div>
+              <div class="muted small" id="chunkDocMeta">-</div>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="chunkModalClose" type="button">关闭</button>
+          </div>
+          <div class="modal-body">
+            <div class="chunk-toolbar">
+              <div class="muted small" id="chunkVectorHint">-</div>
+              <div class="toolbar-actions">
+                <button class="btn btn-secondary btn-sm" id="reembedChunksBtn" type="button">重建向量</button>
+                <button class="btn btn-primary btn-sm" id="toggleAddChunkBtn" type="button">新增 Chunk</button>
+              </div>
+            </div>
+
+            <div id="chunkList"></div>
+            <div class="pagination" id="chunkPagination"></div>
+
+            <div class="card flat hidden" id="chunkAddBox">
+              <div class="form-group">
+                <label for="newChunkContent">Chunk 内容</label>
+                <textarea id="newChunkContent" rows="4" placeholder="输入新的 chunk 文本..."></textarea>
+              </div>
+              <div class="form-actions">
+                <button class="btn btn-primary" id="addChunkBtn" type="button">添加</button>
+                <button class="btn btn-secondary" id="cancelAddChunkBtn" type="button">取消</button>
+              </div>
+            </div>
+
+            <div id="chunkMessage" class="message"></div>
+          </div>
+        </div>
+      </div>
+
+      <section id="page-upload" class="page hidden">
+        <div class="page-header">
+          <h2>上传文件</h2>
+        </div>
+
+        <div class="upload-area">
+          <div class="upload-box card" id="uploadBox">
+            <div class="upload-icon">📁</div>
+            <p>点击选择或拖拽文件到此处</p>
+            <p class="muted">支持 PDF / DOCX / XLSX / CSV / MD / TXT / JSON，最大 50MB</p>
+            <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.csv,.md,.markdown,.txt,.json" hidden />
+          </div>
+
+          <div id="uploadStatus" class="message"></div>
+
+          <div class="upload-preview card hidden" id="uploadPreview">
+            <div class="preview-header">
+              <h3>预览</h3>
+              <div class="preview-info muted">
+                <span><strong>文件：</strong><span id="previewFilename"></span></span>
+                <span><strong>ID：</strong><span id="previewDocId"></span></span>
+                <span><strong>状态：</strong><span id="previewStatus"></span></span>
+                <span><strong>Markdown：</strong><span id="previewMarkdownStatus"></span></span>
+              </div>
+            </div>
+            <pre id="previewContent" class="preview-content"></pre>
+            <div class="preview-actions">
+              <button class="btn btn-secondary" id="convertMarkdownBtn" type="button" disabled>开始/重试转换</button>
+              <button class="btn btn-secondary" id="downloadMarkdownBtn" type="button" disabled>下载 Markdown</button>
+              <button class="btn btn-secondary" id="uploadMarkdownBtn" type="button" disabled>上传 Markdown</button>
+              <button class="btn btn-primary" id="confirmDocBtn" type="button">提交审核</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-query" class="page hidden">
+        <div class="page-header">
+          <h2>知识库查询</h2>
+        </div>
+
+        <div class="query-form card">
+          <div class="form-group">
+            <textarea id="queryInput" placeholder="请输入问题（Ctrl/⌘ + Enter 发送）" rows="4"></textarea>
+          </div>
+
+          <div class="query-params">
+            <div class="param-group">
+              <label for="queryProviderSelect">LLM Provider</label>
+              <select id="queryProviderSelect">
+                <option value="ollama">Ollama</option>
+                <option value="vllm">vLLM（OpenAI API）</option>
+                <option value="xinference">Xinference（OpenAI API）</option>
+              </select>
+            </div>
+            <div class="param-group">
+              <label for="modelSelect">LLM 模型</label>
+              <select id="modelSelect"></select>
+              <input type="text" id="modelInput" class="hidden" placeholder="例如：Qwen/Qwen2.5-7B-Instruct" />
+            </div>
+            <div class="param-group">
+              <label for="topKInput">Top K</label>
+              <input type="number" id="topKInput" value="5" min="1" max="20" />
+            </div>
+            <div class="param-group">
+              <label for="temperatureInput">Temperature</label>
+              <input type="number" id="temperatureInput" value="0.7" min="0" max="2" step="0.1" />
+            </div>
+            <div class="param-group">
+              <label for="rerankEnable">Rerank</label>
+              <div style="display:flex; gap:10px; align-items:center;">
+                <label class="chunk-sync" style="margin:0;">
+                  <input type="checkbox" id="rerankEnable" />
+                  启用
+                </label>
+                <select id="rerankProvider" style="flex:1;">
+                  <option value="none">不使用</option>
+                  <option value="xinference">Xinference</option>
+                </select>
+              </div>
+            </div>
+            <div class="param-group">
+              <label for="rerankModel">Rerank 模型</label>
+              <input type="text" id="rerankModel" placeholder="例如：bge-reranker-v2-m3" />
+            </div>
+            <div class="param-group admin-only hidden">
+              <label for="adminScope">查询范围</label>
+              <select id="adminScope">
+                <option value="all">全库</option>
+                <option value="user">指定用户</option>
+                <option value="self">仅本人</option>
+              </select>
+            </div>
+            <div class="param-group admin-only hidden">
+              <label for="adminUserId">用户 ID（可选）</label>
+              <input type="number" id="adminUserId" placeholder="例如：2" min="1" />
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="btn btn-primary btn-lg" id="queryBtn" type="button">查询</button>
+          </div>
+
+          <div id="modelHint" class="message"></div>
+        </div>
+
+        <div class="query-result card hidden" id="queryResult">
+          <h3>结果</h3>
+          <div class="answer-box" id="answerBox"></div>
+          <h4>相关来源</h4>
+          <div class="sources-box" id="sourcesBox"></div>
+        </div>
+
+        <div id="queryMessage" class="message"></div>
+      </section>
+
+      <section id="page-acceptance" class="page hidden">
+        <div class="page-header">
+          <h2>验收审查</h2>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <h3 style="margin-top:0;">1) 上传验收报告</h3>
+            <div class="upload-box card" id="acceptanceUploadBox">
+              <div class="upload-icon">⬆️</div>
+              <p>点击选择或拖拽文件到此处</p>
+              <p class="muted">支持 PDF / DOCX / XLSX / CSV / MD / TXT / JSON，最大 50MB</p>
+              <input type="file" id="acceptanceFileInput" accept=".pdf,.docx,.xlsx,.csv,.md,.markdown,.txt,.json" hidden />
+            </div>
+
+            <div class="muted small">
+              说明：该报告仅用于生成审查结果，不会自动“提交审核/入库”；你也可以在“我的知识库”里查看它的 chunks。
+            </div>
+
+            <div id="acceptanceUploadStatus" class="message"></div>
+
+            <div class="card flat" id="acceptanceReportCard">
+              <div class="muted small">当前报告</div>
+              <div class="text-small">文件：<span class="mono" id="acceptanceReportName">-</span></div>
+              <div class="text-small">文档ID：<span class="mono" id="acceptanceReportId">-</span></div>
+              <div class="text-small">Markdown：<span class="mono" id="acceptanceReportMarkdownStatus">-</span></div>
+              <div class="form-actions">
+                <button class="btn btn-secondary" id="acceptanceConvertMarkdownBtn" type="button" disabled>开始/重试转换</button>
+                <button class="btn btn-secondary" id="acceptanceDownloadMarkdownBtn" type="button" disabled>下载 Markdown</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 style="margin-top:0;">2) 生成验收审查报告</h3>
+            <div class="query-params" style="grid-template-columns: repeat(2, minmax(180px, 1fr));">
+              <div class="param-group">
+                <label for="acceptanceProviderSelect">LLM Provider</label>
+                <select id="acceptanceProviderSelect">
+                  <option value="ollama">Ollama</option>
+                  <option value="vllm">vLLM（OpenAI API）</option>
+                  <option value="xinference">Xinference（OpenAI API）</option>
+                </select>
+              </div>
+              <div class="param-group">
+                <label for="acceptanceModelSelect">LLM 模型</label>
+                <select id="acceptanceModelSelect"></select>
+                <input type="text" id="acceptanceModelInput" class="hidden" placeholder="例如：Qwen/Qwen2.5-7B-Instruct" />
+              </div>
+              <div class="param-group">
+                <label for="acceptanceTopKInput">Top K（依据条款检索）</label>
+                <input type="number" id="acceptanceTopKInput" value="12" min="1" max="30" />
+              </div>
+              <div class="param-group">
+                <label for="acceptanceTemperatureInput">Temperature</label>
+                <input type="number" id="acceptanceTemperatureInput" value="0.2" min="0" max="2" step="0.1" />
+              </div>
+              <div class="param-group admin-only hidden">
+                <label for="acceptanceScopeSelect">审查范围</label>
+                <select id="acceptanceScopeSelect">
+                  <option value="all">全库（管理员）</option>
+                  <option value="user">指定用户</option>
+                  <option value="self">仅本人</option>
+                </select>
+              </div>
+              <div class="param-group admin-only hidden">
+                <label for="acceptanceScopeUserSelect">选择用户（scope=user）</label>
+                <select id="acceptanceScopeUserSelect">
+                  <option value="">请选择</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button class="btn btn-primary btn-lg" id="acceptanceRunBtn" type="button" disabled>生成审查报告</button>
+              <button class="btn btn-secondary" id="acceptanceDownloadReportBtn" type="button" disabled>下载审查报告</button>
+            </div>
+
+            <div id="acceptanceMessage" class="message"></div>
+          </div>
+        </div>
+
+        <div class="card hidden" id="acceptanceResultCard">
+          <h3 style="margin-top:0;">结果</h3>
+          <div class="muted small">结论：<span class="pill" id="acceptanceVerdict">-</span> <span class="pill" id="acceptancePassed">-</span></div>
+          <div class="review-preview">
+            <pre id="acceptanceReportOutput"></pre>
+          </div>
+          <h4>依据条款来源</h4>
+          <div class="sources-box" id="acceptanceSourcesBox"></div>
+        </div>
+      </section>
+
+      <section id="page-review" class="page hidden">
+        <div class="page-header">
+          <h2>文档审核</h2>
+          <div class="page-actions">
+            <button class="btn btn-secondary" id="refreshReviewBtn" type="button">刷新</button>
+          </div>
+        </div>
+        <div id="reviewList" class="review-list"></div>
+        <div id="reviewMessage" class="message"></div>
+      </section>
+
+      <section id="page-settings" class="page hidden">
+        <div class="page-header">
+          <h2>设置</h2>
+        </div>
+
+        <div class="card">
+          <div class="grid-2">
+            <div>
+              <div class="muted small">API Base</div>
+              <div class="mono" id="settingsApiBase">-</div>
+            </div>
+            <div>
+              <div class="muted small">当前用户</div>
+              <div><span class="pill" id="settingsUser">-</span> <span class="pill" id="settingsRole">-</span></div>
+            </div>
+            <div>
+              <div class="muted small">Token（截断）</div>
+              <div class="mono" id="settingsToken">-</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>用户默认参数</h3>
+          <div class="grid-2">
+            <div>
+              <div class="muted small">默认 LLM Provider</div>
+              <select id="settingsLlmProvider">
+                <option value="ollama">Ollama</option>
+                <option value="vllm">vLLM（OpenAI API）</option>
+                <option value="xinference">Xinference（OpenAI API）</option>
+              </select>
+            </div>
+            <div>
+              <div class="muted small">默认 LLM 模型</div>
+              <select id="settingsDefaultModel"></select>
+              <input type="text" id="settingsDefaultModelInput" class="hidden" placeholder="例如：Qwen/Qwen2.5-7B-Instruct" />
+            </div>
+            <div>
+              <div class="muted small">默认 Top K</div>
+              <input type="number" id="settingsTopK" min="1" max="20" />
+            </div>
+            <div>
+              <div class="muted small">默认 Temperature</div>
+              <input type="number" id="settingsTemp" min="0" max="2" step="0.1" />
+            </div>
+            <div>
+              <div class="muted small">启用 Rerank</div>
+              <label class="chunk-sync" style="margin:0;">
+                <input type="checkbox" id="settingsEnableRerank" />
+                启用
+              </label>
+            </div>
+            <div>
+              <div class="muted small">Rerank Provider</div>
+              <select id="settingsRerankProvider">
+                <option value="none">不使用</option>
+                <option value="xinference">Xinference</option>
+              </select>
+            </div>
+            <div>
+              <div class="muted small">Rerank 模型</div>
+              <input type="text" id="settingsRerankModel" placeholder="例如：bge-reranker-v2-m3" />
+            </div>
+          </div>
+          <div class="form-actions" style="margin-top:12px;">
+            <button class="btn btn-primary" id="settingsSaveBtn" type="button">保存</button>
+            <button class="btn btn-secondary" id="settingsTestInferenceBtn" type="button">测试 LLM 连通</button>
+            <button class="btn btn-secondary" id="settingsTestRerankBtn" type="button">测试 Rerank 连通</button>
+          </div>
+          <div id="settingsUserConfigMessage" class="message"></div>
+        </div>
+
+        <div class="card">
+          <h3>API Base 覆盖（可选）</h3>
+          <div class="muted small">适用于前端无法直接访问默认 API 地址的场景（保存到浏览器本地）。</div>
+          <div class="form-group" style="margin-top:10px;">
+            <input type="text" id="settingsApiBaseOverride" placeholder="例如：http://192.168.1.10:8001/api/v1" />
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-secondary" id="settingsApiBaseSaveBtn" type="button">保存并刷新</button>
+            <button class="btn btn-danger" id="settingsApiBaseClearBtn" type="button">清除覆盖</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Ollama 模型</h3>
+          <div id="settingsModels" class="pill-list"></div>
+        </div>
+
+        <div class="card">
+          <h3>健康状态</h3>
+          <div id="settingsHealth" class="kv-list"></div>
+          <div id="settingsMessage" class="message"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./js/config.js"></script>
+    <script src="./js/utils.js"></script>
+    <script src="./js/api.js"></script>
+    <script src="./js/documents.js"></script>
+    <script src="./js/upload.js"></script>
+    <script src="./js/query.js"></script>
+    <script src="./js/acceptance.js"></script>
+    <script src="./js/review.js"></script>
+    <script src="./js/settings.js"></script>
+    <script src="./js/app.js"></script>
+  </body>
+</html>

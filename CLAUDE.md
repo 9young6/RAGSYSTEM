@@ -110,10 +110,14 @@ Documents transition through states stored in `documents.status` and `markdown_s
 
 **Main Status Flow**:
 1. `uploaded` - Initial state after upload (triggers MinerU conversion)
-2. `confirmed` - User confirmed after reviewing/editing Markdown
+2. `confirmed` - User confirmed after reviewing/editing Markdown (optional)
 3. `approved` - Admin approved, indexing initiated to user's partition
 4. `indexed` - Chunks successfully indexed to user's Milvus partition (terminal success state)
 5. `rejected` - Admin rejected (terminal failure state)
+
+**Improved Review Logic**: Admins can approve/reject documents in **both** `uploaded` and `confirmed` states. This allows flexible workflows:
+- **Fast-track**: Upload → Admin Review → Approved (skip user confirmation if Markdown editing is not needed)
+- **Full workflow**: Upload → User Edits Markdown → Confirmed → Admin Review → Approved
 
 **Markdown Status Flow** (parallel to main status):
 1. `pending` - Awaiting MinerU conversion (set on upload)
@@ -338,8 +342,7 @@ All configuration is in `.env` (see `.env.example` for template).
 - GPU acceleration optional (uncomment GPU config in `docker-compose.yml`)
 
 **Default Admin**:
-- Username: `admin`
-- Password: `admin123`
+- Admin credentials are configured via `.env` (`ADMIN_USERNAME` / `ADMIN_PASSWORD`)
 - Created automatically on first startup via `create_admin()` in `main.py` lifespan
 
 ## Key Implementation Details
@@ -402,7 +405,7 @@ All configuration is in `.env` (see `.env.example` for template).
 # Get token
 TOKEN=$(curl -X POST http://localhost:8001/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}' | jq -r '.access_token')
+  -d '{"username":"<ADMIN_USERNAME>","password":"<ADMIN_PASSWORD>"}' | jq -r '.access_token')
 
 # Use token in requests
 curl http://localhost:8001/api/v1/documents/upload \
@@ -410,13 +413,29 @@ curl http://localhost:8001/api/v1/documents/upload \
   -F "file=@document.pdf"
 ```
 
-### Multi-Tenant API Endpoints (NEW)
+### Multi-Tenant API Endpoints
 
 **Document Management** (owner-filtered):
-- `GET /api/v1/documents` - List user's own documents (admin can add `?user_id=X`)
-- `GET /api/v1/documents/{id}/status` - Check MinerU conversion status
+- `GET /api/v1/documents` - List user's documents with pagination
+  - Query params: `page` (default 1), `page_size` (default 20, max 100), `status_filter` (optional)
+  - Users see their own documents; admins see all documents
+  - Returns: `{documents: [], total: int, page: int, page_size: int}`
+- `GET /api/v1/documents/{id}` - Get document details
+- `GET /api/v1/documents/{id}/markdown/status` - Check MinerU conversion status
 - `GET /api/v1/documents/{id}/markdown/download` - Download converted Markdown
 - `POST /api/v1/documents/{id}/markdown/upload` - Upload edited Markdown
+- `DELETE /api/v1/documents/{id}` - Delete a document (with files and vectors)
+  - Users can delete their own documents; admins can delete any document
+  - Automatically cleans up MinIO files and Milvus vectors
+- `POST /api/v1/documents/batch-delete` - Batch delete multiple documents
+  - Request body: `{"document_ids": [1, 2, 3]}`
+  - Returns: `{"deleted_count": 2, "failed_ids": [3], "message": "..."}`
+
+**Document Review** (admin only):
+- `GET /api/v1/review/pending` - Get documents pending review (status: uploaded or confirmed)
+- `POST /api/v1/review/approve/{id}` - Approve and index document
+- `POST /api/v1/review/reject/{id}` - Reject document with reason
+  - Request body: `{"reason": "不符合要求"}`
 
 **Admin Cross-Query**:
 - `POST /api/v1/query/admin` - Query specific user's library or all libraries

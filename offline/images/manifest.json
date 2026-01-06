@@ -1,0 +1,58 @@
+﻿[
+    {
+        "image":  "docker.m.daocloud.io/library/postgres:15-alpine",
+        "imageId":  "sha256:b3968e348b48f1198cc6de6611d055dbad91cd561b7990c406c3fc28d7095b21",
+        "created":  "2025-12-18T00:39:26.901070045Z",
+        "tarFile":  "docker.m.daocloud.io_library_postgres_15-alpine.tar",
+        "sha256":  "4cdb420da55e266a8cd246014f118031fc17e065fb93f3fcef33b7689e071e9f",
+        "sizeBytes":  109812736
+    },
+    {
+        "image":  "docker.m.daocloud.io/library/redis:7-alpine",
+        "imageId":  "sha256:ee64a64eaab618d88051c3ade8f6352d11531fcf79d9a4818b9b183d8c1d18ba",
+        "created":  "2025-11-03T17:39:59.311419342Z",
+        "tarFile":  "docker.m.daocloud.io_library_redis_7-alpine.tar",
+        "sha256":  "e5895783a2564f4514efbb3fea275a806846efd2765e0403b7c5b3adc805affa",
+        "sizeBytes":  17767424
+    },
+    {
+        "image":  "docker.m.daocloud.io/milvusdb/milvus:latest",
+        "imageId":  "sha256:215400dc74c03393e4c28d808c1efbbbd7f1f46e94ba73b4e583df3ccd81105e",
+        "created":  "2025-09-18T07:32:35.735638264Z",
+        "tarFile":  "docker.m.daocloud.io_milvusdb_milvus_latest.tar",
+        "sha256":  "819b8e5c2052a7d9a578851e0a6f0f275893271785ad6cac3375a3c4a2e7fd58",
+        "sizeBytes":  983745536
+    },
+    {
+        "image":  "docker.m.daocloud.io/minio/minio:latest",
+        "imageId":  "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "created":  "2025-09-07T18:42:37.017942402Z",
+        "tarFile":  "docker.m.daocloud.io_minio_minio_latest.tar",
+        "sha256":  "797ad54f5ad03b9f86e9819257e6f1b5f84f1fde73c8890f104c43d392de763b",
+        "sizeBytes":  62260224
+    },
+    {
+        "image":  "quay.io/coreos/etcd:v3.5.5",
+        "imageId":  "sha256:89b6debd43502d1088f3e02f39442fd3e951aa52bee846ed601cf4477114b89e",
+        "created":  "2022-09-15T12:03:56.284310346Z",
+        "tarFile":  "quay.io_coreos_etcd_v3.5.5.tar",
+        "sha256":  "1ee3551c418b3d8c48e8564360540667ae0c91386fb89de9f7bfc64abeb622d2",
+        "sizeBytes":  74550784
+    },
+    {
+        "image":  "ragsystem_backend:local",
+        "imageId":  "sha256:0e0344f9c290f1dd1a7371cd714c805341fac391b715b215a0523be1dd9a7ab7",
+        "created":  "2026-01-05T16:21:19.100420493Z",
+        "tarFile":  "ragsystem_backend_local.tar",
+        "sha256":  "a89b3d9cb6b15040a4120935a1f07ef8c0fbfa7b512e3bb540297e1cb1df88af",
+        "sizeBytes":  394853888
+    },
+    {
+        "image":  "ragsystem_frontend:local",
+        "imageId":  "sha256:4fbae4dad46c6c25c0ff14af2aafe2934ca62c3825d5a498b5e0d0487421c9d3",
+        "created":  "2026-01-05T16:21:19.029138494Z",
+        "tarFile":  "ragsystem_frontend_local.tar",
+        "sha256":  "b8602bca8bec599c8b811347bd6687d74a6bf9f3146f8e13e0c6a8820c3b85fe",
+        "sizeBytes":  2260992
+    }
+]
