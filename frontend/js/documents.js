@@ -96,10 +96,7 @@
               ? `<button class="btn btn-sm btn-primary" onclick="DocumentsPage.confirmDocument(${doc.id})">确认</button>`
               : "";
 
-          const chunksAction =
-            doc.status === "indexed" || doc.markdown_status === "markdown_ready"
-              ? `<button class="btn btn-sm btn-secondary" onclick="DocumentsPage.openChunks(${doc.id})">Chunks</button>`
-              : `<button class="btn btn-sm btn-secondary" disabled title="等待 Markdown 转换完成">Chunks</button>`;
+          const chunksAction = `<button class="btn btn-sm btn-secondary" onclick="DocumentsPage.openChunks(${doc.id})">Chunks</button>`;
 
           return `
             <tr data-doc-id="${doc.id}">

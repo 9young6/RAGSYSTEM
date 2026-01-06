@@ -22,7 +22,7 @@ def convert_to_markdown(self, document_id: int) -> dict:
         dict: {"status": "success", "document_id": int} or {"status": "failed", "error": str}
     """
     from app.database import SessionLocal
-    from app.models import Document
+    from app.models import Document, DocumentChunk
     from app.services.chunk_service import ChunkService
     from app.services.minio_service import MinioService
 
@@ -75,35 +75,81 @@ def convert_to_markdown(self, document_id: int) -> dict:
 
             # 5. 使用 MinerU 转换
             try:
-                from magic_pdf.pipe.UNIPipe import UNIPipe
-                from magic_pdf.rw.DiskReaderWriter import DiskReaderWriter
+                if document.filename.lower().endswith(".pdf"):
+                    use_magic_pdf = str(os.getenv("MINERU_USE_MAGIC_PDF", "false")).lower() in {"1", "true", "yes", "y"}
+                    if not use_magic_pdf:
+                        raise ValueError("magic-pdf disabled (MINERU_USE_MAGIC_PDF=false)")
 
-                # MinerU 输出目录
-                output_dir = os.path.join(temp_dir, "output")
-                os.makedirs(output_dir, exist_ok=True)
+                    # MinerU / magic-pdf: 支持文本 PDF + OCR PDF
+                    from magic_pdf.libs.MakeContentConfig import DropMode
+                    from magic_pdf.pipe.UNIPipe import UNIPipe
+                    from magic_pdf.rw.DiskReaderWriter import DiskReaderWriter
 
-                # 创建 MinerU pipeline
-                reader = DiskReaderWriter(temp_dir)
-                pipe = UNIPipe(input_path, reader, output_dir)
+                    img_bucket_path = "imgs"
+                    img_dir = os.path.join(temp_dir, img_bucket_path)
+                    os.makedirs(img_dir, exist_ok=True)
 
-                # 执行转换
-                pipe.pipe_classify()
-                pipe.pipe_parse()
-                md_content = pipe.pipe_mk_markdown(output_dir=output_dir, drop_mode="none")
+                    # UNIPipe 期望输入 pdf_bytes + jso_useful_key(dict) + image_writer
+                    jso_useful_key = {"_pdf_type": "", "model_list": []}
+                    pipe = UNIPipe(file_bytes, jso_useful_key, DiskReaderWriter(img_dir))
 
-                logger.info(f"MinerU conversion completed for document {document_id}")
+                    # 执行转换（分类 -> 分析(含 OCR) -> 解析 -> 生成 Markdown）
+                    pipe.pipe_classify()
+                    pipe.pipe_analyze()
+                    pipe.pipe_parse()
+                    md_content = pipe.pipe_mk_markdown(img_parent_path=img_bucket_path, drop_mode=DropMode.NONE)
 
-            except Exception as e:
+                    logger.info(f"MinerU conversion completed for document {document_id}")
+                else:
+                    raise ValueError("MinerU only supports PDF in current pipeline")
+
+            # NOTE: magic-pdf 在缺失重依赖时可能会触发 SystemExit（内部 exit(1)），
+            # 这里必须兜住，避免 Celery worker 进程被直接退出。
+            except BaseException as e:
                 # MinerU 不可用时的降级方案：使用简单的文本提取
-                logger.warning(f"MinerU conversion failed, using fallback: {e}")
+                if isinstance(e, Exception) and str(e).startswith("magic-pdf disabled"):
+                    logger.info(f"MinerU conversion skipped, using fallback: {e}")
+                else:
+                    logger.warning(f"MinerU conversion failed, using fallback: {e}")
 
                 if document.filename.lower().endswith(".pdf"):
                     import pdfplumber
 
+                    page_texts: list[str] = []
                     with pdfplumber.open(input_path) as pdf:
-                        md_content = "\n\n".join(
-                            [f"## Page {i+1}\n\n{page.extract_text() or ''}" for i, page in enumerate(pdf.pages)]
-                        )
+                        for page in pdf.pages:
+                            page_texts.append((page.extract_text() or "").strip())
+
+                    md_content = "\n\n".join([f"## Page {i+1}\n\n{t}" for i, t in enumerate(page_texts)])
+
+                    # 如果文本几乎提取不到，尝试 OCR（可通过环境变量开关）
+                    try:
+                        ocr_enabled = str(os.getenv("OCR_ENABLED", "true")).lower() in {"1", "true", "yes", "y"}
+                        min_chars = int(os.getenv("OCR_MIN_CHARS", "50"))
+                        total_chars = sum(len(t) for t in page_texts)
+                        if ocr_enabled and total_chars < min_chars:
+                            import fitz  # PyMuPDF
+                            import pytesseract
+                            from PIL import Image
+
+                            ocr_lang = os.getenv("OCR_LANG", "chi_sim+eng")
+                            ocr_dpi = int(os.getenv("OCR_DPI", "200"))
+                            max_pages = int(os.getenv("OCR_MAX_PAGES", "0"))  # 0 表示不限制
+
+                            logger.info(f"PDF seems image-based; running OCR: document={document_id}, lang={ocr_lang}")
+                            doc = fitz.open(stream=file_bytes, filetype="pdf")
+                            ocr_parts: list[str] = []
+                            for i, page in enumerate(doc):
+                                if max_pages and i >= max_pages:
+                                    break
+                                pix = page.get_pixmap(dpi=ocr_dpi)
+                                mode = "RGB" if pix.alpha == 0 else "RGBA"
+                                img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
+                                text = (pytesseract.image_to_string(img, lang=ocr_lang) or "").strip()
+                                ocr_parts.append(f"## Page {i+1}\n\n{text}")
+                            md_content = "\n\n".join(ocr_parts) if ocr_parts else md_content
+                    except Exception as ocr_exc:
+                        logger.warning(f"OCR skipped/failed for document {document_id}: {ocr_exc}")
                 elif document.filename.lower().endswith(".docx"):
                     from docx import Document as DocxDocument
 
@@ -129,8 +175,21 @@ def convert_to_markdown(self, document_id: int) -> dict:
         db.commit()
 
         # 7.1 生成 chunks（入库前可供审核/编辑/选择部分入库）
+        # 如果 chunks 已存在（例如用户已提前进入 chunks 页面并做了编辑/勾选），则不自动覆盖。
         try:
-            ChunkService().regenerate_document_chunks(db, document_id=document.id, text=md_content)
+            has_chunks = (
+                db.query(DocumentChunk.id)
+                .filter(DocumentChunk.document_id == document.id)
+                .limit(1)
+                .first()
+                is not None
+            )
+            if document.status == "indexed":
+                logger.info(f"Skip chunk generation for indexed document {document_id}")
+            elif has_chunks:
+                logger.info(f"Skip chunk regeneration because chunks already exist: document={document_id}")
+            else:
+                ChunkService().regenerate_document_chunks(db, document_id=document.id, text=md_content)
         except Exception as exc:
             logger.warning(f"Chunk generation failed for document {document_id}: {exc}")
 

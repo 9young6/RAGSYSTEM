@@ -37,6 +37,7 @@
       this.loadDefaultsFromSettings();
       this.syncRerankUi();
       this.syncLlmUi();
+      this.loadAdminUsers();
     },
 
     setModels(models) {
@@ -73,6 +74,35 @@
       }
 
       this.syncLlmUi();
+    },
+
+    async loadAdminUsers() {
+      if (!API.isAdmin()) return;
+      const select = $("adminUserSelect");
+      if (!select) return;
+
+      try {
+        const res = await API.admin.listUsers();
+        const users = Array.isArray(res?.users) ? res.users : [];
+        select.innerHTML = '<option value="">（请选择用户）</option>';
+        users.forEach((u) => {
+          const id = u?.id;
+          if (!id) return;
+          const opt = document.createElement("option");
+          opt.value = String(id);
+          opt.textContent = `${u?.username || "user"} (id:${id}${u?.role ? `, ${u.role}` : ""})`;
+          select.appendChild(opt);
+        });
+
+        // Keep manual input in sync
+        select.addEventListener("change", () => {
+          const v = (select.value || "").trim();
+          const input = $("adminUserId");
+          if (input) input.value = v;
+        });
+      } catch {
+        select.innerHTML = '<option value="">（用户列表加载失败，可手动输入 ID）</option>';
+      }
     },
 
     async loadDefaultsFromSettings() {
@@ -181,7 +211,8 @@
         const isAdmin = API.isAdmin();
         const scope = isAdmin ? ($("adminScope")?.value || "all") : "self";
         const userIdRaw = isAdmin ? ($("adminUserId")?.value || "").trim() : "";
-        const userId = userIdRaw ? parseInt(userIdRaw, 10) : null;
+        const selectedUser = isAdmin ? (($("adminUserSelect")?.value || "").trim() || "") : "";
+        const userId = (selectedUser ? parseInt(selectedUser, 10) : null) || (userIdRaw ? parseInt(userIdRaw, 10) : null);
 
         let result;
         if (isAdmin && scope !== "self") {

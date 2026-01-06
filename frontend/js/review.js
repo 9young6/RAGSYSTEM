@@ -47,10 +47,14 @@
         const name = Utils.escapeHtml(doc.document_name || "-");
         const statusBadge = Utils.getStatusBadge(doc.status);
         const mdBadge = Utils.getMarkdownStatusBadge(doc.markdown_status);
-        const owner = doc.owner_id ? `user_${doc.owner_id}` : "-";
+        const owner = doc.owner_username
+          ? `${Utils.escapeHtml(doc.owner_username)} (id:${doc.owner_id})`
+          : doc.owner_id
+          ? `user_${doc.owner_id}`
+          : "-";
         const chunkCount = typeof doc.chunk_count === "number" ? doc.chunk_count : null;
         const preview = Utils.escapeHtml((doc.preview || "").slice(0, 400));
-        const chunksBtnDisabled = doc.markdown_status !== "markdown_ready";
+        const chunksBtnDisabled = false;
 
         reviewItem.className = "review-item card";
         reviewItem.innerHTML = `
@@ -88,10 +92,6 @@
 
     async openChunks(doc) {
       if (!API.isAdmin()) return;
-      if (doc.markdown_status !== "markdown_ready") {
-        Utils.showMessage("reviewMessage", "Markdown 未完成转换，无法查看 chunks", "warning");
-        return;
-      }
       if (!window.DocumentsPage?.openChunksFromDoc) {
         Utils.showMessage("reviewMessage", "Chunks 模态框未就绪，请刷新页面后重试", "warning");
         return;

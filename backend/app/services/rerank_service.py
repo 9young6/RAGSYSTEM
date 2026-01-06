@@ -43,7 +43,18 @@ class RerankService:
                 if not isinstance(item, dict):
                     continue
                 idx = item.get("index")
-                score = item.get("score")
+                score = None
+                for key in (
+                    "score",
+                    "relevance_score",  # OpenAI-compatible rerank
+                    "relevanceScore",
+                    "relevance",
+                    "rerank_score",
+                    "rerankScore",
+                ):
+                    if item.get(key) is not None:
+                        score = item.get(key)
+                        break
                 if idx is None or score is None:
                     continue
                 pairs.append((int(idx), float(score)))
@@ -56,4 +67,3 @@ class RerankService:
 
         pairs.sort(key=lambda x: x[1], reverse=True)
         return pairs
-

@@ -25,6 +25,7 @@ class DocumentSummary(BaseModel):
     created_at: datetime
     markdown_status: str | None = None
     owner_id: int | None = None
+    owner_username: str | None = None
     size_bytes: int | None = None
     chunk_count: int | None = None
 

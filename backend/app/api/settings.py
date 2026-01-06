@@ -29,9 +29,9 @@ def get_my_settings(
         default_llm_model = defaults.model
         default_top_k = defaults.top_k
         default_temperature = defaults.temperature
-        enable_rerank = False
-        rerank_provider = "none"
-        rerank_model = None
+        enable_rerank = bool(settings.XINFERENCE_BASE_URL)
+        rerank_provider = "xinference" if enable_rerank else "none"
+        rerank_model = "bge-reranker-large" if enable_rerank else None
     else:
         default_llm_provider = record.default_llm_provider
         default_llm_model = record.default_llm_model

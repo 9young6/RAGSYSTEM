@@ -18,6 +18,12 @@ RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
     build-essential \
     gcc \
     curl \
+    libglib2.0-0 \
+    libgl1 \
+    libgomp1 \
+    tesseract-ocr \
+    tesseract-ocr-chi-sim \
+    tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

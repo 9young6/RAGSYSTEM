@@ -222,7 +222,12 @@
             </div>
             <div class="param-group admin-only hidden">
               <label for="adminUserId">用户 ID（可选）</label>
-              <input type="number" id="adminUserId" placeholder="例如：2" min="1" />
+              <div style="display:flex; gap:10px; align-items:center;">
+                <select id="adminUserSelect" style="flex:1;">
+                  <option value="">（加载用户列表中…）</option>
+                </select>
+                <input type="number" id="adminUserId" placeholder="ID" min="1" style="width:110px;" />
+              </div>
             </div>
           </div>
 

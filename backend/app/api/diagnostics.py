@@ -217,8 +217,19 @@ def diagnose_rerank(
         scores: list[float] = []
         if isinstance(results, list):
             for item in results:
-                if isinstance(item, dict) and "score" in item:
-                    scores.append(float(item["score"]))
+                if not isinstance(item, dict):
+                    continue
+                for key in (
+                    "score",
+                    "relevance_score",  # OpenAI-compatible rerank
+                    "relevanceScore",
+                    "relevance",
+                    "rerank_score",
+                    "rerankScore",
+                ):
+                    if item.get(key) is not None:
+                        scores.append(float(item[key]))
+                        break
         if not scores and isinstance(data.get("scores"), list):
             scores = [float(s) for s in data["scores"]]
         if not scores:

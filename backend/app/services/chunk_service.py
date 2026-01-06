@@ -11,16 +11,21 @@ class ChunkService:
         self.splitter = TextSplitter()
 
     def regenerate_document_chunks(self, db: Session, document_id: int, text: str) -> int:
-        chunks = self.splitter.split(text or "")
+        # Postgres TEXT does not allow NUL (0x00). Some PDF extractors may return it.
+        safe_text = (text or "").replace("\x00", "")
+        chunks = self.splitter.split(safe_text)
 
-        db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete(synchronize_session=False)
-        db.add_all(
-            [
-                DocumentChunk(document_id=document_id, chunk_index=i, content=chunk, included=True)
-                for i, chunk in enumerate(chunks)
-                if chunk and chunk.strip()
-            ]
-        )
-        db.commit()
-        return len(chunks)
-
+        try:
+            db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete(synchronize_session=False)
+            db.add_all(
+                [
+                    DocumentChunk(document_id=document_id, chunk_index=i, content=(chunk or "").replace("\x00", ""), included=True)
+                    for i, chunk in enumerate(chunks)
+                    if chunk and chunk.strip()
+                ]
+            )
+            db.commit()
+            return len(chunks)
+        except Exception:
+            db.rollback()
+            raise

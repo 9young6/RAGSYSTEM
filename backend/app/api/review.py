@@ -25,13 +25,24 @@ def get_pending_reviews(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> PendingReviewsResponse:
-    # Show both 'uploaded' and 'confirmed' documents for review
+    # Only show user-submitted documents that are ready for review.
+    # Rationale: avoid pushing "waiting conversion" docs to admin.
     documents = (
         db.query(Document)
-        .filter(Document.status.in_(["uploaded", "confirmed"]))
+        .filter(Document.status == "confirmed")
+        .filter(Document.markdown_status == "markdown_ready")
         .order_by(Document.created_at.desc())
         .all()
     )
+
+    owner_map: dict[int, str] = {}
+    try:
+        owner_ids = sorted({int(d.owner_id) for d in documents if d.owner_id})
+        if owner_ids:
+            rows = db.query(User).filter(User.id.in_(owner_ids)).all()
+            owner_map = {int(u.id): str(u.username) for u in rows}
+    except Exception:
+        owner_map = {}
     chunk_counts: dict[int, int] = {}
     try:
         ids = [int(d.id) for d in documents]
@@ -55,6 +66,7 @@ def get_pending_reviews(
                 created_at=d.created_at,
                 markdown_status=d.markdown_status,
                 owner_id=d.owner_id,
+                owner_username=owner_map.get(int(d.owner_id)) if d.owner_id else None,
                 size_bytes=d.size_bytes,
                 chunk_count=chunk_counts.get(int(d.id), 0),
             )

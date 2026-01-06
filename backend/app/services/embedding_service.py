@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
 import requests
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
@@ -43,19 +46,42 @@ class EmbeddingService:
 
     def _embed_ollama(self, text: str) -> list[float]:
         url = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/embeddings"
-        payload = {"model": settings.OLLAMA_EMBEDDING_MODEL, "prompt": text}
-        response = requests.post(url, json=payload, timeout=60)
-        response.raise_for_status()
-        data = response.json()
-        vector = data.get("embedding")
-        if not isinstance(vector, list):
-            raise ValueError("Unexpected Ollama embeddings response")
-        if self.dimension and len(vector) != self.dimension:
-            raise ValueError(
-                f"Embedding dimension mismatch (expected {self.dimension}, got {len(vector)}). "
-                "Check OLLAMA_EMBEDDING_MODEL / EMBEDDING_DIMENSION."
-            )
-        return [float(v) for v in vector]
+        prompt = text or ""
+
+        # Some embedding models (e.g. bge-large) enforce relatively small context length.
+        # If Ollama returns "input length exceeds the context length", retry with a shorter prompt.
+        for attempt in range(5):
+            payload = {"model": settings.OLLAMA_EMBEDDING_MODEL, "prompt": prompt}
+            response = requests.post(url, json=payload, timeout=60)
+            if response.status_code >= 400:
+                err_text = ""
+                try:
+                    err_text = str((response.json() or {}).get("error") or "")
+                except Exception:
+                    err_text = ""
+                if not err_text:
+                    err_text = response.text or ""
+
+                if "context length" in err_text.lower() and attempt < 4 and len(prompt) > 128:
+                    new_len = max(128, int(len(prompt) * 0.75))
+                    logger.info("Ollama embeddings prompt too long; retry with %s chars (was %s)", new_len, len(prompt))
+                    prompt = prompt[:new_len]
+                    continue
+
+                response.raise_for_status()
+
+            data = response.json()
+            vector = data.get("embedding")
+            if not isinstance(vector, list):
+                raise ValueError("Unexpected Ollama embeddings response")
+            if self.dimension and len(vector) != self.dimension:
+                raise ValueError(
+                    f"Embedding dimension mismatch (expected {self.dimension}, got {len(vector)}). "
+                    "Check OLLAMA_EMBEDDING_MODEL / EMBEDDING_DIMENSION."
+                )
+            return [float(v) for v in vector]
+
+        raise ValueError("Ollama embeddings failed after retries")
 
     def _embed_hash(self, text: str) -> list[float]:
         import hashlib
@@ -64,4 +90,3 @@ class EmbeddingService:
         vector = [((digest[i % len(digest)] / 255.0) * 2.0 - 1.0) for i in range(self.dimension)]
         norm = math.sqrt(sum(v * v for v in vector)) or 1.0
         return [v / norm for v in vector]
-

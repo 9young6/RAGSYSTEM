@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import func
@@ -41,6 +43,12 @@ from app.services.minio_service import MinioService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def _build_content_disposition(filename: str) -> str:
+    ascii_fallback = re.sub(r"[^A-Za-z0-9._-]+", "_", filename or "").strip("._") or "download"
+    utf8_name = filename or "download"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(utf8_name)}"
 
 
 @router.post("/upload", response_model=DocumentUploadResponse)
@@ -172,6 +180,13 @@ def confirm_document(
     if document.status not in {"uploaded"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status for confirm")
 
+    # Only allow confirm after Markdown is ready (admin review should never see "waiting conversion").
+    if document.markdown_status != "markdown_ready":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Markdown not ready. Please wait for conversion or upload Markdown, then confirm.",
+        )
+
     document.status = "confirmed"
     document.confirmed_at = datetime.now(timezone.utc)
     db.commit()
@@ -263,7 +278,7 @@ def download_markdown(
         return Response(
             content=markdown_bytes,
             media_type="text/markdown",
-            headers={"Content-Disposition": f'attachment; filename="{document.id}_{document.filename}.md"'},
+            headers={"Content-Disposition": _build_content_disposition(f"{document.id}_{document.filename}.md")},
         )
     except Exception as e:
         logger.error(f"Failed to download Markdown for document {document_id}: {e}")
@@ -401,6 +416,10 @@ def list_documents(
     # Apply status filter if provided
     if status_filter:
         query = query.filter(Document.status == status_filter)
+    else:
+        # Hide rejected documents by default for non-admin users.
+        if user.role != "admin":
+            query = query.filter(Document.status != "rejected")
 
     # Get total count
     total = query.count()
@@ -452,8 +471,38 @@ def list_document_chunks(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     if document.owner_id != user.id and user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
-    if document.status != "indexed" and document.markdown_status != "markdown_ready":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chunks not ready (Markdown not ready)")
+
+    # Chunks should be viewable even if Markdown conversion is still processing.
+    # If chunks are missing, generate them once from the best available source:
+    # - Prefer Markdown if ready
+    # - Otherwise fall back to parsing the original file
+    try:
+        has_any = (
+            db.query(DocumentChunk.id)
+            .filter(DocumentChunk.document_id == document_id)
+            .limit(1)
+            .first()
+            is not None
+        )
+    except Exception:
+        has_any = False
+
+    if not has_any:
+        try:
+            minio = MinioService()
+            text = ""
+            if document.markdown_path and document.markdown_status == "markdown_ready":
+                md_bytes = minio.download_bytes(document.markdown_path)
+                text = md_bytes.decode("utf-8", errors="replace")
+            else:
+                raw = minio.download_bytes(document.minio_object)
+                text = DocumentParser().parse_text(raw, document.content_type, document.filename)
+
+            from app.services.chunk_service import ChunkService
+
+            ChunkService().regenerate_document_chunks(db, document_id=document_id, text=text)
+        except Exception as exc:
+            logger.warning(f"Chunks auto-generation skipped for document {document_id}: {exc}")
 
     q = db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id)
     total = q.count()
@@ -494,8 +543,6 @@ def create_document_chunk(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     if document.owner_id != user.id and user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
-    if document.status != "indexed" and document.markdown_status != "markdown_ready":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot edit chunks before Markdown ready")
 
     max_idx = (
         db.query(func.max(DocumentChunk.chunk_index))
@@ -552,8 +599,6 @@ def update_document_chunk(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     if document.owner_id != user.id and user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
-    if document.status != "indexed" and document.markdown_status != "markdown_ready":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot edit chunks before Markdown ready")
 
     chunk = db.get(DocumentChunk, chunk_id)
     if chunk is None or chunk.document_id != document_id:
@@ -636,8 +681,6 @@ def delete_document_chunk(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     if document.owner_id != user.id and user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
-    if document.status != "indexed" and document.markdown_status != "markdown_ready":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot edit chunks before Markdown ready")
 
     chunk = db.get(DocumentChunk, chunk_id)
     if chunk is None or chunk.document_id != document_id:
@@ -774,6 +817,14 @@ def delete_document(
 
     db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete(synchronize_session=False)
 
+    # Delete review actions to avoid FK constraint failures
+    try:
+        from app.models.review_action import ReviewAction
+
+        db.query(ReviewAction).filter(ReviewAction.document_id == document_id).delete(synchronize_session=False)
+    except Exception as e:
+        logger.warning(f"Failed to delete review actions for document {document_id}: {e}")
+
     # Delete document record
     db.delete(document)
     db.commit()
@@ -841,6 +892,14 @@ def batch_delete_documents(
             from app.models.document_chunk import DocumentChunk
 
             db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id).delete(synchronize_session=False)
+
+            # Delete review actions (FK)
+            try:
+                from app.models.review_action import ReviewAction
+
+                db.query(ReviewAction).filter(ReviewAction.document_id == doc_id).delete(synchronize_session=False)
+            except Exception as e:
+                logger.warning(f"Failed to delete review actions for document {doc_id}: {e}")
 
             # Delete document record
             db.delete(document)

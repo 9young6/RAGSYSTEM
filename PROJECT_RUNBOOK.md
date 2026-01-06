@@ -50,8 +50,9 @@
 - Docker Desktop / Docker Engine + Docker Compose v2
 - 外部 Ollama 已安装并可访问（Windows Docker Desktop 通常可用 `http://host.docker.internal:11434`）
 - 需先在 Ollama 里准备模型（示例）：
-  - LLM：`qwen3:latest`
-  - Embedding：`bge-m3:latest`
+  - LLM：`qwen2.5:32b`
+  - Embedding：`bge-large:latest`
+  - （可选）Rerank：`bge-reranker-large`（通过 Xinference 提供）
 
 ### 2.2 配置
 1) 复制 `.env.example` 为 `.env`，至少确认：
@@ -60,6 +61,8 @@
 - `OLLAMA_EMBEDDING_MODEL`
 - `EMBEDDING_PROVIDER=ollama`
 - `EMBEDDING_DIMENSION=1024`（需与 embedding 模型输出维度一致）
+- （可选）Rerank：`XINFERENCE_BASE_URL` + 设置页启用 `bge-reranker-large`
+- （可选）扫描 PDF OCR：`OCR_ENABLED=true`（其余参数见 `.env.example`）
 
 2) 启动：
 - `docker compose up -d --build`
@@ -117,10 +120,12 @@ API（PowerShell 示例）：
 验收点：
 - `md/txt/json/csv/xlsx` 通常会很快到 `markdown_ready`
 - `pdf/docx` 会进入 `processing`，完成后到 `markdown_ready`（失败会显示失败原因）
+- 若 PDF 为扫描件且几乎提取不到文本：会尝试 OCR，并把 OCR 结果写入 Markdown（见 `.env.example` 的 OCR 配置）
 
 ### 4.3 查看与编辑 chunks（RAGFlow 风格）
 前端：
 - “我的知识库”列表里点某文档的 `Chunks`
+- 即使 Markdown 还在 `processing`，也允许进入 chunks（若库里还没有 chunks，会自动从 Markdown/原文件生成一次）
 - 在弹窗里：
   - 勾选/取消“入库”（included）
   - 编辑 chunk 文本并保存
@@ -135,6 +140,7 @@ API（PowerShell 示例）：
 前端：
 - 用管理员账号登录
 - 进入“文档审核”
+- 普通用户需先在文档 `markdown_ready` 后点击“确认提交”，管理员才会看到该文档进入审核列表
 - 选择某文档点击 `Chunks（选择入库）`，勾选部分 chunk
 - 点击“审批通过（按入库选择）”
 
@@ -237,13 +243,19 @@ API（PowerShell 示例）：
 
 ### 7.2 文档一直显示 `processing`
 - 看 worker 日志：`docker compose logs --tail 200 celery_worker`
-- 常见原因：MinerU 模型首次下载慢/失败（内网需提前准备缓存或改为支持的直读类型）
+- 常见原因：worker 未运行/崩溃；或开启 `MINERU_USE_MAGIC_PDF=true` 后缺依赖/模型下载慢（默认已关闭，会自动走降级解析 + OCR）
 
 ### 7.3 查询没有命中 sources
 - 检查文档是否 `indexed`
 - 检查 embedding 模型与维度：
   - `EMBEDDING_DIMENSION` 必须与 embedding 输出一致
   - 不建议在已有数据后随意改维度/collection
+- 若日志出现 `input length exceeds the context length`：已对 Ollama embeddings 做自动截断重试；仍异常可适当调小 `CHUNK_SIZE`
+- 若 Milvus volumes 重置导致向量为空：可用管理员接口重建向量 `POST /api/v1/admin/reindex`
+
+### 7.5 管理员一键重建索引（Milvus 为空/迁移后）
+- 重建指定文档：`POST /api/v1/admin/reindex` body=`{"document_ids":[20]}`
+- 重建某个用户的已入库文档：`POST /api/v1/admin/reindex` body=`{"owner_id": 1, "status_in": ["indexed"]}`
 
 ### 7.4 vLLM / Xinference 查询失败
 - 在“设置”页点击“测试 LLM 连通”
@@ -255,4 +267,3 @@ API（PowerShell 示例）：
 数据默认落在 Docker volumes（Postgres/Milvus/MinIO/Redis/MinerU cache）。
 - 迁移到新机器时，若只拷贝代码与镜像，历史数据不会自动带过去（volumes 仍为空）。
 - 如需要迁移历史数据：应单独规划 volumes 的导出/导入（通常是停服务后打包 Docker volume 数据目录）。
-

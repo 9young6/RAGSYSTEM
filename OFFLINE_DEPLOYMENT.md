@@ -49,8 +49,8 @@
 - 复制 `.env.example` 为 `.env` 并按需修改。
 - 本项目默认 **Ollama 在容器外部**（不打包 `ollama/ollama` 镜像），请设置 `OLLAMA_BASE_URL` 为可访问地址。
 - 请确保外部 Ollama 已准备好模型：
-  - LLM：例如 `qwen3:latest`
-  - Embedding：例如 `bge-m3:latest`
+  - LLM：例如 `qwen2.5:32b`
+  - Embedding：例如 `bge-large:latest`
 
 3) 启动（强制离线策略，不会拉取任何镜像）：
 
@@ -67,13 +67,17 @@
 
 必填/常用：
 - `OLLAMA_BASE_URL`：外部 Ollama 地址（Docker Desktop 可用 `http://host.docker.internal:11434`，Linux 内网请改为宿主机 IP）
-- `OLLAMA_MODEL`：默认对话模型（例如 `qwen3:latest`）
-- `OLLAMA_EMBEDDING_MODEL`：默认嵌入模型（例如 `bge-m3:latest`）
+- `OLLAMA_MODEL`：默认对话模型（例如 `qwen2.5:32b`）
+- `OLLAMA_EMBEDDING_MODEL`：默认嵌入模型（例如 `bge-large:latest`）
 - `EMBEDDING_PROVIDER=ollama` + `EMBEDDING_DIMENSION=1024`：与 Milvus collection 维度一致
 
 可选（OpenAI 兼容推理后端）：
 - `VLLM_BASE_URL` / `VLLM_API_KEY`：用于 `vllm` provider（`/v1/chat/completions`）
 - `XINFERENCE_BASE_URL` / `XINFERENCE_API_KEY`：用于 `xinference` provider（`/v1/chat/completions`），以及可选 Rerank（`/v1/rerank`）
+
+可选（扫描 PDF OCR / MinerU）：
+- `OCR_ENABLED=true`：当 PDF 文本提取很少时自动尝试 OCR（其余参数见 `.env.example`）
+- `MINERU_USE_MAGIC_PDF=false`：是否启用 magic-pdf（依赖较重，默认关闭，会自动降级）
 
 注意：`EMBEDDING_DIMENSION` / `MILVUS_COLLECTION` 一旦有数据入库后不建议随意修改；需要变更时建议新建 collection 并重建向量。
 
