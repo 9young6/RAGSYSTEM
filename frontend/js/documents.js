@@ -82,6 +82,10 @@
           const statusBadge = Utils.getStatusBadge(doc.status);
           const mdBadge = Utils.getMarkdownStatusBadge(doc.markdown_status);
           const safeName = Utils.escapeHtml(doc.document_name || "");
+          const statusTitle =
+            doc.status === "rejected" && doc.reject_reason ? Utils.escapeHtml(String(doc.reject_reason)) : "";
+          const mdTitle =
+            doc.markdown_status === "failed" && doc.markdown_error ? Utils.escapeHtml(String(doc.markdown_error)) : "";
           const ownerCell = isAdmin ? `<td><span class="pill">user_${doc.owner_id}</span></td>` : "";
           const mdAction =
             doc.markdown_status === "markdown_ready"
@@ -91,9 +95,16 @@
             doc.markdown_status === "markdown_ready"
               ? `<button class="btn btn-sm btn-secondary" onclick="DocumentsPage.uploadMarkdown(${doc.id})">上传 MD</button>`
               : "";
+          const canConfirm = doc.markdown_status === "markdown_ready";
           const confirmAction =
             doc.status === "uploaded"
-              ? `<button class="btn btn-sm btn-primary" onclick="DocumentsPage.confirmDocument(${doc.id})">确认</button>`
+              ? canConfirm
+                ? `<button class="btn btn-sm btn-primary" onclick="DocumentsPage.confirmDocument(${doc.id})">确认</button>`
+                : `<button class="btn btn-sm btn-secondary" disabled>确认（等待转换）</button>`
+              : doc.status === "rejected"
+              ? canConfirm
+                ? `<button class="btn btn-sm btn-primary" onclick="DocumentsPage.confirmDocument(${doc.id})">重新提交</button>`
+                : `<button class="btn btn-sm btn-secondary" disabled>重新提交（等待转换）</button>`
               : "";
 
           const chunksAction = `<button class="btn btn-sm btn-secondary" onclick="DocumentsPage.openChunks(${doc.id})">Chunks</button>`;
@@ -107,10 +118,10 @@
               <td class="doc-name" title="${safeName}">${safeName}</td>
               ${ownerCell}
               <td>
-                <span class="badge ${statusBadge.class}">${statusBadge.text}</span>
+                <span class="badge ${statusBadge.class}" title="${statusTitle}">${statusBadge.text}</span>
               </td>
               <td>
-                <span class="badge ${mdBadge.class}">${mdBadge.text}</span>
+                <span class="badge ${mdBadge.class}" title="${mdTitle}">${mdBadge.text}</span>
               </td>
               <td>${Utils.formatFileSize(doc.size_bytes)}</td>
               <td class="text-small">${Utils.formatDate(doc.created_at)}</td>
@@ -282,12 +293,23 @@
     },
 
     async confirmDocument(id) {
-      if (!confirm("确认提交此文档进入审核流程吗？")) {
+      const doc = docCache.get(Number(id));
+      const isResubmit = doc?.status === "rejected";
+
+      if (doc && doc.markdown_status !== "markdown_ready") {
+        Utils.showMessage("docsMessage", "Markdown 还未转换完成，请等待转换成功后再提交。", "warning");
+        return;
+      }
+
+      const prompt = isResubmit
+        ? "该文档之前已被拒绝，确认重新提交并清空拒绝原因吗？"
+        : "确认提交此文档进入审核流程吗？";
+      if (!confirm(prompt)) {
         return;
       }
       try {
         await API.documents.confirm(id);
-        Utils.showMessage("docsMessage", "已提交审核", "success");
+        Utils.showMessage("docsMessage", isResubmit ? "已重新提交，等待管理员审核" : "已提交审核", "success");
         this.loadDocuments();
       } catch (error) {
         Utils.showMessage("docsMessage", `提交失败：${error.message}`, "error");

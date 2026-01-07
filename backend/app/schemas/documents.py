@@ -36,6 +36,8 @@ class DocumentListItem(BaseModel):
     document_name: str
     status: str
     markdown_status: str | None = None
+    markdown_error: str | None = None
+    reject_reason: str | None = None
     created_at: datetime
     confirmed_at: datetime | None = None
     reviewed_at: datetime | None = None
@@ -61,6 +63,9 @@ class DocumentDetail(BaseModel):
     document_name: str
     status: str
     preview: str | None = None
+    markdown_status: str | None = None
+    markdown_error: str | None = None
+    reject_reason: str | None = None
 
 
 class BatchDeleteRequest(BaseModel):

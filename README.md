@@ -27,7 +27,7 @@ This repository provides a minimal, Docker-Compose-friendly RAG knowledge base s
 
 ## 功能概览
 - 文档上传：支持 `PDF/DOCX/XLSX/CSV/MD/TXT/JSON`（MinIO 保存原文件 + Postgres 保存元数据/分块）
-- 自动转 Markdown：`md/txt/json/csv/xlsx` 直接生成；`pdf/docx` 异步转换（失败可“开始/重试转换”）
+- 自动转 Markdown：`md/txt/json/csv/xlsx/docx` 直接生成；`pdf` 异步转换（失败可“开始/重试转换”）
 - 文档确认：上传者确认后进入待审核队列
 - 审核：管理员 approve/reject；approve 自动触发索引
 - 向量检索：Milvus 保存向量（document_id/chunk_index/embedding）
@@ -35,7 +35,7 @@ This repository provides a minimal, Docker-Compose-friendly RAG knowledge base s
 - Chunk 管理：查看/编辑/新增/删除 chunk，支持勾选“入库”与（已入库文档）重建向量
 - 用户级设置：默认模型/top_k/temperature、推理后端与连通性测试
 - 验收审查：上传报告→检索依据条款→生成固定格式“验收审查报告”
-- 健康检查：`/api/v1/health` 检查 Postgres/Milvus/MinIO/Ollama 连通性
+- 健康检查：`/api/v1/health` 检查 Postgres/Milvus/MinIO/Ollama（以及可选 Xinference）连通性
 - 前端页面：上传 / 审核 / 查询（静态页面，便于快速演示）
 
 ## 快速启动（Docker Compose）
@@ -79,6 +79,7 @@ curl -s http://localhost:8001/api/v1/health
 
 状态流转：
 `uploaded -> confirmed -> indexed`（通过并索引）或 `uploaded -> confirmed -> rejected`
+> 被拒绝（`rejected`）后，用户可在“我的知识库”查看拒绝原因并点击“重新提交”再次进入审核流程。
 
 ## API 速览
 接口基路径：`/api/v1`
@@ -146,4 +147,4 @@ python scripts/sdk_smoke_test.py --api-url http://localhost:8001/api/v1 --with-p
 - 将 `.env` 的 `EMBEDDING_PROVIDER` 从 `hash` 切到 `ollama` 或 `sentence_transformers`，并安装 `backend/requirements-optional.txt` 中依赖/拉取 embedding 模型。
 
 4) PDF 解析不到内容
-- 如果是扫描件/图片 PDF，本项目不会 OCR，因此可能无法提取到可搜索文本（上传时预览会提示“未提取到可搜索文本…”）。
+- 如果是扫描件/图片 PDF，本项目会在文本提取很少时自动尝试 OCR（Tesseract），并把 OCR 结果写入 Markdown（见 `.env.example` 的 `OCR_*` 配置）。

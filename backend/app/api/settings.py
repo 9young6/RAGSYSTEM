@@ -53,6 +53,8 @@ def get_my_settings(
         server=ServerDefaults(
             api_base=api_base,
             ollama_base_url=settings.OLLAMA_BASE_URL,
+            vllm_base_url=settings.VLLM_BASE_URL,
+            xinference_base_url=settings.XINFERENCE_BASE_URL,
             embedding_provider=settings.EMBEDDING_PROVIDER,
             embedding_model=settings.EMBEDDING_MODEL,
             embedding_dimension=int(settings.EMBEDDING_DIMENSION),
@@ -94,6 +96,8 @@ def update_my_settings(
         server=ServerDefaults(
             api_base=api_base,
             ollama_base_url=settings.OLLAMA_BASE_URL,
+            vllm_base_url=settings.VLLM_BASE_URL,
+            xinference_base_url=settings.XINFERENCE_BASE_URL,
             embedding_provider=settings.EMBEDDING_PROVIDER,
             embedding_model=settings.EMBEDDING_MODEL,
             embedding_dimension=int(settings.EMBEDDING_DIMENSION),

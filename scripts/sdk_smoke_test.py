@@ -277,6 +277,21 @@ def wait_for_status(client: KnowledgeBaseClient, document_id: int, status: str, 
     raise TimeoutError(f"Timeout waiting for document #{document_id} to reach status={status}")
 
 
+def wait_for_markdown_ready(client: KnowledgeBaseClient, document_id: int, timeout_s: int = 180) -> None:
+    deadline = time.time() + timeout_s
+    last_status: str | None = None
+    while time.time() < deadline:
+        current = client.get_markdown_status(document_id)
+        md_status = str(current.get("markdown_status") or "")
+        last_status = md_status or last_status
+        if md_status == "markdown_ready":
+            return
+        if md_status == "failed":
+            raise RuntimeError(f"Markdown conversion failed for document #{document_id}: {current.get('markdown_error')}")
+        time.sleep(1)
+    raise TimeoutError(f"Timeout waiting for document #{document_id} to reach markdown_ready (last={last_status})")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Knowledge Base System SDK smoke test")
     parser.add_argument("--api-url", default=os.environ.get("KB_API_URL", "http://localhost:8001/api/v1"))
@@ -453,6 +468,7 @@ def main() -> int:
             upload2 = user.upload_document(reject_path)
             doc2_id = int(upload2["document_id"])
             print("Upload (reject):", upload2)
+            wait_for_markdown_ready(user, doc2_id, timeout_s=90)
             user.confirm_document(doc2_id)
             rejected = admin.reject_document(doc2_id, reason="自动化测试：内容不符合要求")
             print("Reject:", rejected)
@@ -470,6 +486,7 @@ def main() -> int:
             upload3 = user.upload_document(pdf_path)
             doc3_id = int(upload3["document_id"])
             print("Upload (pdf):", upload3)
+            wait_for_markdown_ready(user, doc3_id, timeout_s=180)
             user.confirm_document(doc3_id)
             admin.approve_document(doc3_id)
             wait_for_status(user, doc3_id, status="indexed", timeout_s=120)

@@ -90,7 +90,8 @@ async def upload_document(
     normalized_name = (filename or "").lower()
     ext = "." + (normalized_name.split(".")[-1] if "." in normalized_name else "")
     direct_md_exts = {".md", ".markdown"}
-    direct_text_exts = {".txt", ".json", ".csv", ".xlsx"}
+    # Treat DOCX as "direct" too: python-docx extraction is fast and avoids waiting for celery/MinerU.
+    direct_text_exts = {".txt", ".json", ".csv", ".xlsx", ".docx"}
     is_direct_markdown = ext in (direct_md_exts | direct_text_exts)
 
     # Create document with owner_id and markdown_status
@@ -177,7 +178,8 @@ def confirm_document(
     if document.owner_id != user.id and user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
-    if document.status not in {"uploaded"}:
+    # Allow re-submit after reject (user can update Markdown/chunks and confirm again)
+    if document.status not in {"uploaded", "rejected"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status for confirm")
 
     # Only allow confirm after Markdown is ready (admin review should never see "waiting conversion").
@@ -189,6 +191,10 @@ def confirm_document(
 
     document.status = "confirmed"
     document.confirmed_at = datetime.now(timezone.utc)
+    # Clear previous review outcome if this is a re-submit.
+    document.reviewer_id = None
+    document.reviewed_at = None
+    document.reject_reason = None
     db.commit()
     return DocumentConfirmResponse(document_id=document.id, status=document.status)
 
@@ -213,6 +219,9 @@ def get_document(
         document_name=document.filename,
         status=document.status,
         preview=document.preview_text,
+        markdown_status=document.markdown_status,
+        markdown_error=document.markdown_error,
+        reject_reason=document.reject_reason,
     )
 
 
@@ -281,6 +290,17 @@ def download_markdown(
             headers={"Content-Disposition": _build_content_disposition(f"{document.id}_{document.filename}.md")},
         )
     except Exception as e:
+        try:
+            from minio.error import S3Error
+
+            if isinstance(e, S3Error) and getattr(e, "code", "") in {"NoSuchKey", "NoSuchBucket"}:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Markdown not found in storage")
+        except HTTPException:
+            raise
+        except Exception:
+            # ignore import/type issues and fall back to generic error
+            pass
+
         logger.error(f"Failed to download Markdown for document {document_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to download Markdown")
 
@@ -417,8 +437,10 @@ def list_documents(
     if status_filter:
         query = query.filter(Document.status == status_filter)
     else:
-        # Hide rejected documents by default for non-admin users.
-        if user.role != "admin":
+        # Default list behavior:
+        # - Admin: hide rejected docs by default (they can still filter status=rejected if needed)
+        # - User: show all (so they can see reject feedback and resubmit)
+        if user.role == "admin":
             query = query.filter(Document.status != "rejected")
 
     # Get total count
@@ -439,6 +461,8 @@ def list_documents(
                 document_name=d.filename,
                 status=d.status,
                 markdown_status=d.markdown_status,
+                markdown_error=d.markdown_error,
+                reject_reason=d.reject_reason,
                 created_at=d.created_at,
                 confirmed_at=d.confirmed_at,
                 reviewed_at=d.reviewed_at,

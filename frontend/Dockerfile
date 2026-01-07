@@ -1,5 +1,4 @@
-ARG REGISTRY_MIRROR=docker.m.daocloud.io
-FROM ${REGISTRY_MIRROR}/library/busybox:latest
+FROM busybox:latest
 
 WORKDIR /site
 COPY ./ /site

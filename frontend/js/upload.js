@@ -79,6 +79,7 @@
       $("downloadMarkdownBtn").disabled = true;
       $("uploadMarkdownBtn").disabled = true;
       $("convertMarkdownBtn").disabled = false;
+      $("confirmDocBtn").disabled = true;
 
       $("uploadPreview").classList.remove("hidden");
     },
@@ -110,6 +111,7 @@
           $("downloadMarkdownBtn").disabled = false;
           $("uploadMarkdownBtn").disabled = false;
           $("convertMarkdownBtn").disabled = true;
+          $("confirmDocBtn").disabled = false;
           Utils.showMessage("uploadStatus", "Markdown 转换完成，可下载/编辑后上传。", "success");
         } else if (status === "failed") {
           this.clearMarkdownCheck();
@@ -120,9 +122,11 @@
           );
           $("uploadMarkdownBtn").disabled = false;
           $("convertMarkdownBtn").disabled = false;
+          $("confirmDocBtn").disabled = true;
         } else {
           // pending/processing
           $("convertMarkdownBtn").disabled = false;
+          $("confirmDocBtn").disabled = true;
         }
       } catch (error) {
         // Avoid spamming UI for transient errors.
@@ -175,6 +179,7 @@
         Utils.showMessage("uploadStatus", "上传 Markdown 中...", "info");
         await API.documents.uploadMarkdown(currentDocId, file);
         $("previewMarkdownStatus").textContent = "已上传";
+        $("confirmDocBtn").disabled = false;
         Utils.showMessage("uploadStatus", "Markdown 上传成功，可提交审核。", "success");
       } catch (error) {
         Utils.showMessage("uploadStatus", `上传失败：${error.message}`, "error");

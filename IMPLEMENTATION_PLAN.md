@@ -1,5 +1,13 @@
 # 多租户 RAG 系统实施计划
 
+## 2026-01 现状补充（与代码保持一致）
+
+- `docx`：上传后直接生成 Markdown + chunks（无需等待 Celery/MinerU）
+- `pdf`：默认启用 MinerU/magic-pdf（失败自动降级到常规解析 + OCR，并写入 Markdown）
+- 拒绝流：用户端可看到拒绝原因并“重新提交”；管理员默认列表隐藏 `rejected`（可用筛选查看）
+- 设置页：展示后端 `.env` 的 Ollama/Xinference Base URL 与 embedding 配置，并可一键测试连通性
+- 冒烟测试：`scripts/sdk_smoke_test.py` 会等待 `markdown_ready` 再 confirm/approve（避免“等待转换”误判）
+
 ## 当前进度
 
 ### ✅ 已完成

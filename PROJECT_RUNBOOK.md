@@ -118,8 +118,8 @@ API（PowerShell 示例）：
 - 查看 Markdown 状态（自动轮询），失败可点“开始/重试转换”
 
 验收点：
-- `md/txt/json/csv/xlsx` 通常会很快到 `markdown_ready`
-- `pdf/docx` 会进入 `processing`，完成后到 `markdown_ready`（失败会显示失败原因）
+- `md/txt/json/csv/xlsx/docx` 通常会很快到 `markdown_ready`
+- `pdf` 会进入 `processing`，完成后到 `markdown_ready`（失败会显示失败原因）
 - 若 PDF 为扫描件且几乎提取不到文本：会尝试 OCR，并把 OCR 结果写入 Markdown（见 `.env.example` 的 OCR 配置）
 
 ### 4.3 查看与编辑 chunks（RAGFlow 风格）
@@ -143,6 +143,7 @@ API（PowerShell 示例）：
 - 普通用户需先在文档 `markdown_ready` 后点击“确认提交”，管理员才会看到该文档进入审核列表
 - 选择某文档点击 `Chunks（选择入库）`，勾选部分 chunk
 - 点击“审批通过（按入库选择）”
+- 若点击“拒绝”：文档状态变为 `rejected`；用户端可在“我的知识库”看到拒绝原因并点击“重新提交”再次进入审核流程
 
 验收点：
 - 文档变为 `indexed`
@@ -243,7 +244,7 @@ API（PowerShell 示例）：
 
 ### 7.2 文档一直显示 `processing`
 - 看 worker 日志：`docker compose logs --tail 200 celery_worker`
-- 常见原因：worker 未运行/崩溃；或开启 `MINERU_USE_MAGIC_PDF=true` 后缺依赖/模型下载慢（默认已关闭，会自动走降级解析 + OCR）
+- 常见原因：worker 未运行/崩溃；或启用 `MINERU_USE_MAGIC_PDF=true` 后缺依赖/模型下载慢（默认已开启；失败会自动走降级解析 + OCR）
 
 ### 7.3 查询没有命中 sources
 - 检查文档是否 `indexed`

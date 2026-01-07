@@ -76,7 +76,8 @@ def convert_to_markdown(self, document_id: int) -> dict:
             # 5. 使用 MinerU 转换
             try:
                 if document.filename.lower().endswith(".pdf"):
-                    use_magic_pdf = str(os.getenv("MINERU_USE_MAGIC_PDF", "false")).lower() in {"1", "true", "yes", "y"}
+                    # Default-enable magic-pdf (MinerU). If it fails (missing deps/models), we automatically fall back.
+                    use_magic_pdf = str(os.getenv("MINERU_USE_MAGIC_PDF", "true")).lower() in {"1", "true", "yes", "y"}
                     if not use_magic_pdf:
                         raise ValueError("magic-pdf disabled (MINERU_USE_MAGIC_PDF=false)")
 

@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 class ServerDefaults(BaseModel):
     api_base: str
     ollama_base_url: str
+    vllm_base_url: str | None = None
+    xinference_base_url: str | None = None
     embedding_provider: str
     embedding_model: str
     embedding_dimension: int

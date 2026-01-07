@@ -78,6 +78,17 @@
     },
 
     applyUserSettingsToForm(data) {
+      const server = data?.server && typeof data.server === "object" ? data.server : {};
+      if ($("settingsOllamaBaseUrl")) $("settingsOllamaBaseUrl").textContent = server.ollama_base_url || "-";
+      if ($("settingsXinferenceBaseUrl")) $("settingsXinferenceBaseUrl").textContent = server.xinference_base_url || "-";
+      if ($("settingsEmbeddingInfo")) {
+        const provider = server.embedding_provider || "-";
+        const model = server.embedding_model || "-";
+        const dim = server.embedding_dimension ?? "-";
+        const ollamaEmbed = server.ollama_embedding_model || "-";
+        $("settingsEmbeddingInfo").textContent = `${provider} | ${model} | dim=${dim} | ollama_embedding_model=${ollamaEmbed}`;
+      }
+
       $("settingsLlmProvider").value = data.default_llm_provider || "ollama";
 
       this.syncModelSelect(availableModels, data.default_llm_model);

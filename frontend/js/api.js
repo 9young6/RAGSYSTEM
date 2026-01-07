@@ -41,6 +41,30 @@ const API = {
     return response;
   },
 
+  _readError: async (response) => {
+    let raw = "";
+    try {
+      raw = await response.text();
+    } catch {
+      return `HTTP ${response.status}`;
+    }
+
+    if (!raw) return `HTTP ${response.status}`;
+
+    try {
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === "object") {
+        if (typeof obj.detail === "string" && obj.detail.trim()) return obj.detail.trim();
+        if (typeof obj.message === "string" && obj.message.trim()) return obj.message.trim();
+        if (typeof obj.error === "string" && obj.error.trim()) return obj.error.trim();
+      }
+    } catch {
+      // ignore JSON parse errors
+    }
+
+    return raw;
+  },
+
   // Auth APIs
   auth: {
     login: async (username, password) => {
@@ -50,9 +74,7 @@ const API = {
         body: JSON.stringify({ username, password }),
       });
 
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
+      if (!response.ok) throw new Error(await API._readError(response));
 
       const data = await response.json();
       API.setToken(data.access_token);
@@ -66,9 +88,7 @@ const API = {
         body: JSON.stringify({ username, password }),
       });
 
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
+      if (!response.ok) throw new Error(await API._readError(response));
 
       const data = await response.json();
       API.setToken(data.access_token);
@@ -88,13 +108,13 @@ const API = {
       if (ownerId) url += `&owner_id=${ownerId}`;
 
       const response = await API.fetch(url);
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
     get: async (id) => {
       const response = await API.fetch(`/documents/${id}`);
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -107,7 +127,7 @@ const API = {
         body: formData,
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -116,7 +136,7 @@ const API = {
         method: "POST",
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -125,7 +145,7 @@ const API = {
         method: "DELETE",
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -136,19 +156,19 @@ const API = {
         body: JSON.stringify({ document_ids: documentIds }),
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
     getMarkdownStatus: async (id) => {
       const response = await API.fetch(`/documents/${id}/markdown/status`);
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
     downloadMarkdown: async (id) => {
       const response = await API.fetch(`/documents/${id}/markdown/download`);
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.blob();
     },
 
@@ -161,13 +181,13 @@ const API = {
         body: formData,
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
     convertMarkdown: async (id) => {
       const response = await API.fetch(`/documents/${id}/markdown/convert`, { method: "POST" });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
   },
@@ -176,7 +196,7 @@ const API = {
   chunks: {
     list: async (documentId, page = 1, pageSize = 50) => {
       const response = await API.fetch(`/documents/${documentId}/chunks?page=${page}&page_size=${pageSize}`);
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -186,7 +206,7 @@ const API = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -199,7 +219,7 @@ const API = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -207,7 +227,7 @@ const API = {
       const response = await API.fetch(`/documents/${documentId}/chunks/${chunkId}`, {
         method: "DELETE",
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -219,7 +239,7 @@ const API = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
   },
@@ -228,7 +248,7 @@ const API = {
   admin: {
     listUsers: async () => {
       const response = await API.fetch("/admin/users");
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
   },
@@ -237,7 +257,7 @@ const API = {
   settings: {
     getMe: async () => {
       const response = await API.fetch("/settings/me");
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -247,7 +267,7 @@ const API = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload || {}),
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
   },
@@ -260,7 +280,7 @@ const API = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload || {}),
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -270,7 +290,7 @@ const API = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload || {}),
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -280,7 +300,7 @@ const API = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload || {}),
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
   },
@@ -314,7 +334,7 @@ const API = {
         body: JSON.stringify(payload),
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -348,7 +368,7 @@ const API = {
         body: JSON.stringify(payload),
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
   },
@@ -361,7 +381,7 @@ const API = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload || {}),
       });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
   },
@@ -370,7 +390,7 @@ const API = {
   review: {
     getPending: async () => {
       const response = await API.fetch("/review/pending");
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -379,7 +399,7 @@ const API = {
         method: "POST",
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
 
@@ -390,7 +410,7 @@ const API = {
         body: JSON.stringify({ reason }),
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await API._readError(response));
       return await response.json();
     },
   },

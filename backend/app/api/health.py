@@ -57,4 +57,20 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
         ok = False
         details["ollama"] = f"error: {exc}"
 
+    # Optional: Xinference (OpenAI-compatible)
+    if settings.XINFERENCE_BASE_URL:
+        try:
+            url = f"{settings.XINFERENCE_BASE_URL.rstrip('/')}/v1/models"
+            headers = {}
+            if settings.XINFERENCE_API_KEY:
+                headers["Authorization"] = f"Bearer {settings.XINFERENCE_API_KEY}"
+            response = requests.get(url, headers=headers, timeout=5)
+            response.raise_for_status()
+            details["xinference"] = "ok"
+        except Exception as exc:
+            ok = False
+            details["xinference"] = f"error: {exc}"
+    else:
+        details["xinference"] = "not_configured"
+
     return HealthResponse(status="ok" if ok else "degraded", details=details)
