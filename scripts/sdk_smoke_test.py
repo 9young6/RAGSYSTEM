@@ -49,7 +49,7 @@ class KnowledgeBaseClient:
         return resp.json()
 
     def list_documents(self, page: int = 1, page_size: int = 20, status_filter: str | None = None) -> dict[str, Any]:
-        params = {"page": page, "page_size": page_size}
+        params = {"page": int(page), "page_size": int(page_size)}
         if status_filter:
             params["status_filter"] = status_filter
         resp = self.session.get(f"{self.api_url}/documents", params=params, timeout=30)
