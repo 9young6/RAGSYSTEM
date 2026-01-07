@@ -9,6 +9,17 @@ from app.database import Base
 
 
 class ReviewAction(Base):
+    """
+    审核操作流水（审计日志）。
+
+    目前记录：
+    - approve：审核通过（随后会触发索引）
+    - reject：审核拒绝（会写入 reason，并把 Document.status 置为 rejected）
+
+    典型定制点（内网场景）：
+    - 接入外部审批系统：可在写入 ReviewAction 后，额外调用 Webhook / MQ
+    - 增加更多动作：如 "request_changes" / "escalate" 等
+    """
     __tablename__ = "review_actions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -22,4 +33,3 @@ class ReviewAction(Base):
 
     document = relationship("Document")
     reviewer = relationship("User")
-

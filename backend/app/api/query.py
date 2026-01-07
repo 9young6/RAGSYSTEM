@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+"""
+query.py：检索问答接口（FastAPI）。
+
+接口分两类：
+- `POST /query`：普通用户查询，只检索自己的知识库（Milvus 用户分区隔离）
+- `POST /query/admin`：管理员跨库查询，可选择指定 user_id 或全库
+
+查询参数来源：
+- 请求体 `QueryRequest` 可覆盖单次查询的 provider/model/top_k/temperature/rerank 等
+- 若未提供，则使用 `UserSettings` 中的默认值（见 `backend/app/api/settings.py`）
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 

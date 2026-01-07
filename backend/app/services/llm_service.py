@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+"""
+llm_service.py：统一的 LLM 调用封装（后端服务层）。
+
+支持三种 provider：
+- `ollama`：调用 `POST {OLLAMA_BASE_URL}/api/generate`
+- `vllm`：OpenAI-compatible，调用 `POST {VLLM_BASE_URL}/v1/chat/completions`
+- `xinference`：OpenAI-compatible，调用 `POST {XINFERENCE_BASE_URL}/v1/chat/completions`
+
+说明：
+- vLLM/Xinference 的 `model` 必须由调用方显式提供（请求参数或用户默认值），以适配多模型场景。
+- 连通性/配置诊断见 `backend/app/api/diagnostics.py`。
+"""
+
 import requests
 
 from app.config import settings

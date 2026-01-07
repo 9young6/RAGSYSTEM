@@ -7,6 +7,15 @@ from app.database import Base
 
 
 class DocumentChunk(Base):
+    """
+    文档分块（chunk）表。
+
+    设计目的：
+    - 让“管理员/用户”在入库前就可以查看/编辑/删除/新增 chunk
+    - 通过 `included` 控制该 chunk 是否参与“最终入库”（索引到 Milvus）
+      - 管理员审核时可在前端勾选 included
+      - `RAGService.index_document()` 只会写入 included=true 的 chunks
+    """
     __tablename__ = "document_chunks"
     __table_args__ = (UniqueConstraint("document_id", "chunk_index", name="uq_document_chunk"),)
 

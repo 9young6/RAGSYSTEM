@@ -1,5 +1,21 @@
 from __future__ import annotations
 
+"""
+settings.py：用户侧“默认查询设置”接口（FastAPI）。
+
+这个模块只存储“每个用户的默认值”（UserSettings）：
+- 默认 LLM provider/model/top_k/temperature
+- 是否启用 rerank，以及 rerank provider/model
+
+同时返回一份“服务端默认配置”（来自 `.env`），用于前端展示与一键诊断：
+- Ollama/vLLM/Xinference 的 base_url（服务地址）
+- embedding provider/model/dimension
+
+说明：
+- 服务地址/端口本身不写入数据库，统一由部署侧环境变量控制（`.env` / 容器环境变量）。
+- 前端如果需要“可编辑的推理地址”，建议做成“环境覆盖”或“多环境配置”，并配合 `/diagnostics/*` 做连通性测试。
+"""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends

@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""
+chunk_service.py：chunk 生成与重建逻辑（切分器封装）。
+
+约定：
+- chunk 生成只依赖纯文本（Markdown/解析文本）
+- 生成结果写入 Postgres（`DocumentChunk`），供审核/编辑/勾选 included
+"""
+
 from sqlalchemy.orm import Session
 
 from app.models.document_chunk import DocumentChunk

@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+"""
+rerank_service.py：重排（Rerank）服务封装。
+
+当前实现：Xinference rerank API（OpenAI 风格变体）。
+- 请求：`POST {XINFERENCE_BASE_URL}/v1/rerank`
+- 载荷：`{"model": "...", "query": "...", "documents": ["...", ...]}`
+
+返回格式在不同实现间可能略有差异，本模块做了兼容解析（results/data/scores 等）。
+"""
+
 import logging
 
 import requests

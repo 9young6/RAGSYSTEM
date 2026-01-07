@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+"""
+milvus_service.py：Milvus 向量库封装（collection/partition/insert/search/delete）。
+
+设计要点：
+- 使用单个 collection（`MILVUS_COLLECTION`），通过 partition 做多租户隔离（`user_{id}`）。
+- 向量字段：`embedding`；同时存储 `document_id` + `chunk_index` 以便回表读取 chunk 文本。
+- 删除策略：按 document_id 删除，或按 (document_id, chunk_index) 删除单个 chunk。
+
+注意：
+- `EMBEDDING_DIMENSION` 一旦用于创建 collection 后，不建议随意修改（需要重建 collection 并全量 reindex）。
+"""
+
 import logging
 
 from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, Partition, connections, utility

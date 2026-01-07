@@ -1,5 +1,22 @@
 from __future__ import annotations
 
+"""
+review.py：管理员审核接口（FastAPI）。
+
+审核链路（简化）：
+1) 用户上传文档 -> 后端生成 Markdown + chunks（PDF 走 Celery/MinerU）
+2) 用户确认提交（Document.status=confirmed，且 markdown_status=markdown_ready）
+3) 管理员审核：
+   - `GET /review/pending`：只展示“已确认提交 + Markdown 就绪”的文档
+   - `POST /review/approve/{id}`：记录审核动作 + 触发索引（写入 Milvus）
+   - `POST /review/reject/{id}`：记录审核动作 + 写入拒绝原因（用户可见并可重新提交）
+
+内网常见定制点：
+- 待审核队列的筛选规则（`get_pending_reviews()`：哪些状态/哪些用户可见）
+- approve/reject 后的动作（是否自动索引、是否需要二次确认、是否接入外部审批系统）
+- 审计字段与动作类型扩展（`ReviewAction.action` 的枚举扩展）
+"""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -25,8 +42,9 @@ def get_pending_reviews(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> PendingReviewsResponse:
-    # Only show user-submitted documents that are ready for review.
-    # Rationale: avoid pushing "waiting conversion" docs to admin.
+    # 只展示“用户已确认提交 + Markdown 已就绪”的文档：
+    # - 避免管理员看到“待转换/processing”的文档
+    # - 避免审核内容与最终入库内容不一致
     documents = (
         db.query(Document)
         .filter(Document.status == "confirmed")

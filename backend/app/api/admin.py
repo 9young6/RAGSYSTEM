@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""
+admin.py：管理员运维接口（FastAPI）。
+
+当前包含：
+- 用户清单：`GET /admin/users`（前端可用于 owner 过滤下拉框、对比用户）
+- 索引重建：`POST /admin/reindex`（Milvus 向量丢失/迁移后重建）
+"""
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 

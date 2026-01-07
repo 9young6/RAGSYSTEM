@@ -1,5 +1,26 @@
 from __future__ import annotations
 
+"""
+rag_service.py：RAG 核心服务层（检索、重排、生成、索引）。
+
+职责：
+- `index_document()`：
+  1) 从 Postgres 读取 chunks（若不存在则从 Markdown/原文生成并写回）
+  2) 对 `included=true` 的 chunks 生成 embedding
+  3) 写入 Milvus（按 user partition 隔离，字段：document_id + chunk_index + embedding）
+  4) 更新 Document.status/indexed_at
+
+- `query()`：
+  1) 对 query 生成 embedding
+  2) Milvus 检索（默认只搜用户分区；管理员可跨分区）
+  3) 可选 rerank（Xinference /v1/rerank）
+  4) 组装上下文 + 调用 LLM 生成回答（Ollama 或 OpenAI-compatible：vLLM/Xinference）
+
+与“审核/可编辑”的关系：
+- chunks 永远存 Postgres（便于管理员审核时编辑/删改/勾选 included）
+- Milvus 只存向量；当 chunk 内容被修改或 included 变化后，需要重建向量（见 chunks/reembed 或管理员 reindex）
+"""
+
 import logging
 from datetime import datetime, timezone
 

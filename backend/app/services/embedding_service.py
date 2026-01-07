@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+"""
+embedding_service.py：统一的 embedding 生成封装。
+
+当前支持的 provider（通过 `.env` 的 `EMBEDDING_PROVIDER` 控制）：
+- `ollama`：调用 `POST {OLLAMA_BASE_URL}/api/embeddings`（模型名使用 `OLLAMA_EMBEDDING_MODEL`）
+- `sentence_transformers`：容器内本地推理（`EMBEDDING_MODEL` 指向本地/HF 模型名）
+- `hash`：兜底方案（纯哈希向量，只用于演示/开发，无法提供真实语义检索）
+
+注意：
+- `EMBEDDING_DIMENSION` 必须与所用 embedding 模型输出维度一致，否则 Milvus collection 会不匹配。
+- Ollama embeddings 可能对输入长度有限制；这里做了自动截断重试，避免因超长 chunk 导致整体索引失败。
+"""
+
 import logging
 import math
 from typing import Any

@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+"""
+minio_service.py：MinIO 对象存储封装（上传/下载/删除/按用户隔离路径）。
+
+约定的对象路径（多租户隔离）：
+- 原始文件：`user_{id}/documents/<uuid>_<filename>`
+- Markdown：`user_{id}/markdown/<document_id>.md`
+
+这样做的好处：
+- 用户之间天然隔离，管理员也可以按 user 前缀做批量运维/迁移
+- 便于离线交付时做 bucket 级别备份/恢复
+"""
+
 import io
 
 from minio import Minio
@@ -78,4 +90,3 @@ class MinioService:
         prefix = self.get_user_path(user_id, path_type)
         objects = self.client.list_objects(self.bucket, prefix=prefix, recursive=True)
         return [obj.object_name for obj in objects]
-

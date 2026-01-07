@@ -1,217 +1,112 @@
-# 前端重构工作总结
+# 前端架构说明与定制指南
 
-## 已完成的工作（阶段1：紧急修复）
+本文档面向“内网定制/二次开发”，说明当前前端的页面结构、模块划分、与后端接口的对应关系，以及最常见的改动点（尤其是文档审核相关）。
 
-### 后端修复
+> 后端整体架构与文件入口请同时参考：`ARCHITECTURE.md`。
 
-1. **✅ 修复文档审核状态错误**
-   - 文件：`backend/app/api/review.py`
-   - 修改：支持 `uploaded` 和 `confirmed` 两种状态的文档审核
-   - 增加了更详细的错误提示
+---
 
-2. **✅ 添加文档删除接口**
-   - 文件：`backend/app/api/documents.py`
-   - 新增：`DELETE /api/v1/documents/{id}` - 单个删除
-   - 新增：`POST /api/v1/documents/batch-delete` - 批量删除
-   - 自动清理 MinIO 文件和 Milvus 向量
+## 1. 页面与导航（app.html）
 
-3. **✅ 添加文档列表接口**
-   - 新增：`GET /api/v1/documents` - 支持分页和状态筛选
-   - 参数：`page`, `page_size`, `status_filter`
-   - 多租户支持：用户只看自己的文档，管理员看所有文档
+主界面：`frontend/app.html`，左侧导航包含：
+- **我的知识库**：文档列表 + 删除 + Chunk 管理（编辑/勾选 included/重建向量）。
+- **上传文件**：上传原始文件、查看预览、等待/重试 Markdown 转换、下载/上传 Markdown、确认提交审核。
+- **知识库查询**：RAG 查询（Milvus 检索 + 可选 rerank + LLM 生成），展示 sources。
+- **验收审查**：上传验收材料、生成审查报告（Markdown），支持管理员范围扩展。
+- **文档审核（管理员）**：待审核列表、通过/拒绝（管理员可见）。
+- **设置**：用户默认模型参数、后端推理配置展示、连通性测试（diagnostics）。
 
-4. **✅ 扩展数据模型**
-   - 文件：`backend/app/schemas/documents.py`
-   - 新增：`DocumentListItem`, `BatchDeleteRequest`, `BatchDeleteResponse`
+权限控制：
+- 是否显示“文档审核”等管理员功能，由前端 `API.isAdmin()` 判断，并在 UI 上隐藏（同时后端也会做强制鉴权）。
 
-### 前端修复
+---
 
-5. **✅ 修复 LLM 模型配置问题**
-   - 文件：`frontend/app.js`
-   - 修改：从硬编码 `llama2` 改为使用动态配置
-   - 使用 `defaultModel` 变量和 `availableModels` 数组
+## 2. JS 模块划分（frontend/js）
 
-6. **✅ 更新文档**
-   - 文件：`CLAUDE.md`
-   - 更新了 API 端点文档
-   - 更新了文档状态流转说明
+### 2.1 基础模块
+- `config.js`：全局配置（API base、存储键等）。
+- `utils.js`：通用工具（DOM、时间/大小格式化、状态徽章、消息提示等）。
+- `api.js`：统一 API 客户端（token 注入、请求封装、端点分组）。
+- `auth.js`：登录/注册页逻辑（`login.html` 使用）。
+- `app.js`：主应用“路由/页面切换”、用户信息、退出登录、初始化各页面模块。
 
-## 已完成的工作（阶段2：前端重构）
+### 2.2 功能模块
+- `documents.js`：文档列表 + 批量删除 + Chunk 管理弹窗（CRUD、included 勾选、reembed）。
+- `upload.js`：上传与 Markdown 工作流（轮询 markdown_status、下载/上传、确认提交）。
+- `review.js`：管理员审核（加载待审核列表、通过/拒绝）。
+- `query.js`：RAG 查询（provider/model/top_k/temperature/rerank），结果与 sources 展示。
+- `settings.js`：用户默认设置保存、服务端默认值展示、连通性测试按钮。
+- `acceptance.js`：验收审查工作流（上传材料、转换 Markdown、生成报告、下载）。
 
-### 新建前端架构
+---
 
-7. **✅ 创建独立的登录页面**
-   - 文件：`frontend/login.html`
-   - 功能：登录/注册切换，表单验证，自动跳转
+## 3. 与后端 API 的对应关系
 
-8. **✅ 创建主应用页面框架**
-   - 文件：`frontend/app.html`
-   - 包含：Header、Sidebar、四个主要页面（文档、上传、查询、审核）
+后端 API base：默认 `http://<host>:8001/api/v1`（详见 `PROJECT_RUNBOOK.md`）。
 
-9. **✅ 创建模块化 JS 架构**
-   - `frontend/js/config.js` - 全局配置
-   - `frontend/js/utils.js` - 工具函数（日期格式化、文件大小、状态徽章等）
-   - `frontend/js/api.js` - API 客户端（完整的 API 封装）
-   - `frontend/js/auth.js` - 登录页面逻辑
+主要端点映射：
+- 登录/注册：`/auth/login`、`/auth/register`
+- 文档：`/documents/*`（上传、列表、删除、Markdown、Chunks）
+- 审核：`/review/*`
+- 查询：`/query`、`/query/admin`
+- 设置：`/settings/me`
+- 诊断：`/diagnostics/*`
+- 运维：`/admin/users`、`/admin/reindex`
 
-## 待完成的工作
+---
 
-### 功能模块 JS 实现
+## 4. 重点：文档审核（Review）定制入口
 
-1. **`frontend/js/documents.js`** - 文档列表管理
-   - 文档列表渲染（表格视图）
-   - 分页控件
-   - 状态筛选
-   - 批量选择和批量删除
-   - 单个文档删除
+### 4.1 前端改哪里
+- 页面逻辑：`frontend/js/review.js`
+  - `loadPendingReviews()`：拉取待审核列表
+  - `approveDocument()` / `rejectDocument()`：触发审核动作
+- API 封装：`frontend/js/api.js`（通常是 `API.review.*`）
 
-2. **`frontend/js/upload.js`** - 文档上传
-   - 文件选择和拖拽上传
-   - 上传进度显示
-   - 文档预览
-   - Markdown 状态轮询
-   - Markdown 下载/上传
-   - 文档确认
+常见定制示例：
+- 审核列表增加字段（owner、chunk 数、风险评分等）：修改 `review.js` 的渲染 + 后端 `GET /review/pending` 返回结构。
+- “通过”弹出二次确认/要求选择策略：修改 `review.js` 的交互，再调用同一个 approve 接口或新增后端接口。
 
-3. **`frontend/js/query.js`** - 知识库查询
-   - 查询表单处理
-   - 模型列表加载
-   - 查询结果渲染
-   - 来源文档显示
+### 4.2 后端对应改哪里
+- 审核接口：`backend/app/api/review.py`
+- 审核动作审计：`backend/app/models/review_action.py`
+- 文档状态/字段：`backend/app/models/document.py`
 
-4. **`frontend/js/review.js`** - 文档审核（管理员）
-   - 待审核列表加载
-   - 审核操作（批准/拒绝）
-   - 拒绝原因输入
+---
 
-5. **`frontend/js/app.js`** - 主应用逻辑
-   - 用户信息显示
-   - 登录状态检查
-   - 页面路由切换
-   - 权限控制（隐藏管理员功能）
-   - 退出登录
+## 5. Chunk 管理（Documents → Chunk Modal）
 
-### CSS 样式重构
+Chunk 管理弹窗在 `frontend/app.html` 中定义，逻辑在：
+- `frontend/js/documents.js`：chunk 列表、编辑、included 勾选、删除、新增、重建向量
+- 后端：`backend/app/api/documents.py`（`/documents/{id}/chunks*`）
 
-6. **`frontend/style.css`** - 完整的样式表
-   - 需要实现的样式模块：
-     - 登录页面样式
-     - 主应用布局（header, sidebar, main）
-     - 表单和按钮样式
-     - 表格样式（文档列表）
-     - 卡片样式（审核列表）
-     - 徽章/标签样式（状态显示）
-     - 消息提示样式
-     - 响应式布局
+约定：
+- **Postgres 存 chunk 正文（可编辑）**；**Milvus 只存向量**。
+- `included=false` 的 chunk 不会参与入库索引（`RAGService.index_document()` 只取 included=true）。
+- 对“已入库（indexed）”文档修改 chunk 后，如果希望检索立即生效，需要重建向量（reembed 或管理员 reindex）。
 
-### 配置更新
+---
 
-7. **Nginx 配置更新**
-   - `frontend/Dockerfile` 或 nginx 配置
-   - 需要配置路由规则：
-     - `/` -> `login.html`
-     - `/app` -> `app.html`
-     - SPA 路由支持
+## 6. 设置页与连通性测试
 
-## 技术架构说明
+设置页的两个概念：
+- **用户默认值**（可保存）：默认 provider/model/top_k/temperature/rerank（后端表：UserSettings）。
+- **服务端默认配置**（只展示）：来自 `.env`，包括 Ollama/vLLM/Xinference base_url 与 embedding 配置。
 
-### 前端架构特点
+连通性测试按钮对应后端：
+- `POST /diagnostics/ollama`
+- `POST /diagnostics/inference`
+- `POST /diagnostics/rerank`
 
-1. **模块化设计**
-   - 每个功能模块独立的 JS 文件
-   - 通过全局 `window` 对象共享模块
+---
 
-2. **统一的 API 客户端**
-   - 所有 API 调用通过 `API` 对象
-   - 自动添加 Authorization header
-   - 统一的错误处理
+## 7. 前端调试建议（内网/镜像环境）
 
-3. **工具函数库**
-   - 日期、文件大小格式化
-   - 状态徽章生成
-   - 消息提示显示
+推荐调试方式：
+- **开发态**：`docker compose up -d --build`（默认挂载 `frontend/` 到容器内，改代码刷新即可生效）
+- **定位 API 问题**：浏览器 DevTools Network 看请求路径与返回值；后端看 `docker compose logs --tail 200 backend`
 
-4. **响应式设计**
-   - 参考 RAGFlow UI 风格
-   - 支持桌面和移动端
-   - 侧边栏可折叠
+常见问题：
+- “Failed to fetch”：通常是 API base 配错、后端未启动、或 CORS/网络不可达。
+- 列表/下载失败：优先看后端日志（MinIO/Milvus/推理后端不可达时会有明确错误信息）。
 
-### 页面结构
-
-```
-frontend/
-├── login.html          # 登录页面（入口）
-├── app.html            # 主应用页面
-├── index.html          # 旧版本（可以删除或重定向）
-├── style.css           # 全局样式
-├── js/
-│   ├── config.js       # 配置
-│   ├── utils.js        # 工具函数
-│   ├── api.js          # API 客户端
-│   ├── auth.js         # 登录逻辑
-│   ├── app.js          # 主应用逻辑
-│   ├── documents.js    # 文档管理
-│   ├── upload.js       # 上传功能
-│   ├── query.js        # 查询功能
-│   └── review.js       # 审核功能
-└── Dockerfile          # Nginx 配置
-```
-
-## 下一步行动计划
-
-### 优先级 1（核心功能）
-1. 实现 `documents.js` - 文档列表是核心功能
-2. 实现 `app.js` - 主应用路由和权限控制
-3. 重构 `style.css` - 基础样式必须有
-
-### 优先级 2（重要功能）
-4. 实现 `upload.js` - 上传和 Markdown 编辑
-5. 实现 `query.js` - 查询功能
-6. 实现 `review.js` - 审核功能
-
-### 优先级 3（优化）
-7. 优化 UI/UX
-8. 添加加载动画
-9. 改进错误提示
-10. 添加快捷键支持
-
-## 建议
-
-### 立即可做
-
-1. 先完成基础 CSS，让页面可以正常显示
-2. 实现 app.js 的基础路由功能
-3. 逐个实现功能模块，每完成一个就可以测试一个功能
-
-### 长期优化
-
-1. 考虑引入 Vue 3 或 React 进行更复杂的状态管理
-2. 使用 TypeScript 提升代码质量
-3. 使用构建工具（Vite）优化加载速度
-4. 添加单元测试和 E2E 测试
-
-## 快速开始
-
-继续实现剩余的 JS 模块，建议顺序：
-
-```bash
-# 1. 先创建基础样式
-vim frontend/style.css
-
-# 2. 实现主应用逻辑
-vim frontend/js/app.js
-
-# 3. 实现文档列表
-vim frontend/js/documents.js
-
-# 4. 实现上传功能
-vim frontend/js/upload.js
-
-# 5. 实现查询功能
-vim frontend/js/query.js
-
-# 6. 实现审核功能
-vim frontend/js/review.js
-```
-
-每完成一个模块后，可以在浏览器中测试对应功能。

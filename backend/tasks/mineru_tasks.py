@@ -1,5 +1,26 @@
 from __future__ import annotations
 
+"""
+mineru_tasks.py：文档转换异步任务（Celery）。
+
+核心目标：
+- 将用户上传的原始文件转换为 Markdown（优先 MinerU/magic-pdf，其次 fallback，再次 OCR）
+- 转换成功后写入 MinIO：`user_{owner_id}/markdown/{document_id}.md`
+- 同步生成 chunks（写入 Postgres），以便用户/管理员直接进入 chunk 级别管理
+
+关键环境变量（见 `.env.example`）：
+- `MINERU_USE_MAGIC_PDF=true|false`：是否启用 magic-pdf（默认 true）
+- `OCR_ENABLED=true|false`：PDF 文本过少时是否启用 OCR（默认 false，建议内网按需开启）
+- `OCR_LANG` / `OCR_DPI` / `OCR_MAX_PAGES` / `OCR_MIN_CHARS`
+
+状态约定（Document）：
+- `markdown_status`: processing -> markdown_ready -> failed
+- `markdown_error`: 失败原因（便于前端提示与排障）
+
+注意：
+- magic-pdf 在缺失依赖时可能触发 `SystemExit`，这里捕获 `BaseException` 防止 Celery worker 进程被退出。
+"""
+
 import logging
 import os
 import tempfile

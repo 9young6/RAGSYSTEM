@@ -1,130 +1,91 @@
-# 多租户 RAG 系统实施计划
+# 实施与迭代计划（与当前代码一致）
 
-## 2026-01 现状补充（与代码保持一致）
+本文档用于给“交付内网 + 长期维护”的团队提供一个可执行的迭代清单：哪些能力已经闭环、上线前怎么验收、后续常见增强点从哪里做起。
 
-- `docx`：上传后直接生成 Markdown + chunks（无需等待 Celery/MinerU）
-- `pdf`：默认启用 MinerU/magic-pdf（失败自动降级到常规解析 + OCR，并写入 Markdown）
-- 拒绝流：用户端可看到拒绝原因并“重新提交”；管理员默认列表隐藏 `rejected`（可用筛选查看）
-- 设置页：展示后端 `.env` 的 Ollama/Xinference Base URL 与 embedding 配置，并可一键测试连通性
-- 冒烟测试：`scripts/sdk_smoke_test.py` 会等待 `markdown_ready` 再 confirm/approve（避免“等待转换”误判）
+> 运行/部署命令请看：`PROJECT_RUNBOOK.md`；离线交付请看：`OFFLINE_DEPLOYMENT.md`；代码入口与定制点请看：`ARCHITECTURE.md`。
 
-## 当前进度
+---
 
-### ✅ 已完成
-1. **数据库模型更新** - `backend/app/models/document.py`
-   - 添加 `owner_id` (多租户隔离)
-   - 添加 `markdown_path`, `markdown_status`, `markdown_error` (MinerU支持)
+## 1. 当前能力（已实现）
 
-2. **数据库迁移文件** - `backend/alembic/versions/023e2c73bbf7_*.py`
-   - 安全地添加新字段
-   - 为已有文档设置 owner_id
-   - 创建必要的索引
+### 1.1 多租户隔离
+- Postgres：`Document.owner_id` 作为归属与权限过滤关键字段。
+- MinIO：对象路径按 `user_{id}/...` 组织（原始文件/Markdown 分开）。
+- Milvus：单 collection + per-user partition（`user_{id}`）隔离检索空间。
 
-### 🔄 待实施 (按优先级)
+### 1.2 文档工作流闭环
+- 上传：`POST /documents/upload`（写入 MinIO + 建 Document）
+- Markdown：
+  - 非 PDF：同步生成 Markdown + chunks
+  - PDF：Celery 异步 MinerU/magic-pdf（失败自动降级 + 可选 OCR）
+- 用户确认提交：`POST /documents/confirm/{id}`（仅允许 markdown_ready）
+- 管理员审核：`GET /review/pending`、`POST /review/approve/{id}`、`POST /review/reject/{id}`
+- 入库：approve 后触发索引写入 Milvus（仅 included=true 的 chunk）
+- 查询：`POST /query`（用户库）/ `POST /query/admin`（管理员跨库）
 
-#### Phase 1: 核心依赖和基础设施 (关键)
-1. **更新 requirements.txt**
-   ```
-   celery==5.3.4
-   magic-pdf==0.7.0  # MinerU
-   ```
+### 1.3 Chunk 可编辑（入库前/入库后）
+- CRUD：`/documents/{id}/chunks*`
+- `included` 控制是否参与入库
+- 已入库文档支持重建向量：
+  - 对单文档 chunks：`POST /documents/{id}/chunks/reembed`
+  - 管理员批量：`POST /admin/reindex`
 
-2. **创建 Celery 配置** - `backend/tasks/celery_app.py`
-   ```python
-   from celery import Celery
-   from app.config import settings
+### 1.4 推理后端与诊断
+- LLM：Ollama / OpenAI-compatible（vLLM、Xinference）
+- Embedding：Ollama（默认）/ hash（演示）/ sentence-transformers（代码支持，若要启用需安装依赖）
+- Rerank：Xinference（`/v1/rerank`）
+- 连通性诊断：`/diagnostics/*`
 
-   celery_app = Celery(
-       "knowledge_base",
-       broker=settings.CELERY_BROKER_URL,
-       backend=settings.CELERY_RESULT_BACKEND
-   )
-   ```
+---
 
-3. **创建 MinerU 转换任务** - `backend/tasks/mineru_tasks.py`
-   - `convert_to_markdown(document_id)` 异步任务
-   - 处理 PDF→Markdown 转换
-   - 错误处理和重试机制
+## 2. 上线前验收（推荐必做）
 
-#### Phase 2: 服务层更新 (核心逻辑)
-4. **更新 MinIO 服务** - `backend/app/services/minio_service.py`
-   - 添加 `get_user_path(user_id, type)` 方法
-   - 支持 `user_{id}/documents/` 和 `user_{id}/markdown/` 路径
+### 2.1 冒烟脚本（推荐）
+在容器内执行（依赖齐全）：
+- `docker compose exec backend python /scripts/sdk_smoke_test.py --api-url http://localhost:8000/api/v1 --auto-register --model qwen2.5:32b`
 
-5. **更新 Milvus 服务** - `backend/app/services/milvus_service.py`
-   - 添加 `create_partition(partition_name)` 方法
-   - 更新 `insert_vectors()` 支持 partition_name 参数
-   - 更新 `search()` 支持 partition_names 过滤
+覆盖链路：
+- 注册/登录 → 上传 → 等待 markdown_ready → 确认提交 → 管理员审批索引 → 查询命中 sources
+- Chunk CRUD + included + reembed
+- rerank（未配置也不阻断）
+- 验收审查报告生成
 
-6. **更新 RAG 服务** - `backend/app/services/rag_service.py`
-   - `query()` 方法添加 partition_names 参数
-   - `index_document()` 支持用户分区
-   - 使用 Markdown 内容而非原始 PDF
+### 2.2 关键配置核对（.env）
+- `EMBEDDING_PROVIDER` 与 embedding 模型输出维度匹配（`EMBEDDING_DIMENSION`）
+- `MILVUS_COLLECTION` 在“已有数据”后不随意变更（需要重建向量）
+- `OLLAMA_BASE_URL` / `XINFERENCE_BASE_URL` / `VLLM_BASE_URL` 在容器内可访问（常见：`host.docker.internal`）
 
-#### Phase 3: API 端点更新 (用户接口)
-7. **更新 documents.py** - `backend/app/api/documents.py`
-   - 修改 `upload_document()`: 设置 owner_id, 触发 Celery任务
-   - 添加 `get_document_status()`: 查询 Markdown 转换状态
-   - 添加 `download_markdown()`: 下载转换后的 Markdown
-   - 添加 `upload_markdown()`: 用户上传编辑后的 Markdown
-   - 修改 `list_documents()`: 添加 owner_id 过滤
+---
 
-8. **更新 query.py** - `backend/app/api/query.py`
-   - 修改 `query()`: 仅查询用户自己的分区
-   - 添加 `admin_query()`: 管理员跨库查询
+## 3. 迭代建议（内网常见增强项）
 
-9. **更新 review.py** - `backend/app/api/review.py`
-   - `approve_document()`: 使用 Markdown 内容索引到用户分区
+按优先级给出建议方向（不强制）：
 
-#### Phase 4: Docker 配置更新
-10. **更新 docker-compose.yml**
-    - 添加 celery_worker 服务
-    - 添加 CELERY_BROKER_URL 环境变量
-    - 添加 mineru_models volume
+### P0：稳定性与可观测性
+- 为关键链路（上传、转换、索引、查询）补充更聚合的日志字段（doc_id/owner_id/task_id）。
+- 在前端增加“错误详情/建议操作”的展示（后端已返回 markdown_error、诊断 error）。
 
-11. **更新 .env.example**
-    - 添加 Celery 配置项
+### P1：纯 vLLM 环境适配（无 Ollama）
+当前最小可行方案：
+- LLM 使用 vLLM（查询时 provider=vllm）
+- embedding 仍需一个 embedding 提供方：Ollama 或在后端启用 sentence-transformers（需在 `backend/requirements.txt` 增加依赖并离线预置模型）
 
-#### Phase 5: 测试
-12. **创建测试脚本** - `scripts/test_multi_tenant.py`
-    - 测试用户注册
-    - 测试文档上传和 MinerU 转换
-    - 测试 Markdown 下载/上传
-    - 测试审核和索引到分区
-    - 测试多租户隔离查询
+如需要“embedding 也走 OpenAI-compatible”（vLLM/Xinference），建议后续在 `EmbeddingService` 增加 provider 支持，并同步扩展 `/diagnostics` 测试。
 
-## 实施建议
+### P2：OCR/解析能力增强
+- 对扫描 PDF：OCR 结果落地为 Markdown（当前已支持），可进一步：
+  - 保存中间产物（图片/页面文本）用于追溯
+  - 增加“仅 OCR / 仅 MinerU / 自动”策略开关（UI + 任务参数）
 
-### 方案 A: 渐进式实施 (推荐)
-1. 先运行数据库迁移
-2. 实施 Phase 1-2 (核心功能)
-3. 测试基本流程
-4. 实施 Phase 3 (API)
-5. 完整测试
+### P2：审核流程扩展
+- 增加更多审核动作（例如 request_changes/escalate）
+- 对接外部审批系统（Webhook/MQ），以 `ReviewAction` 为审计入口
 
-### 方案 B: 完整实施
-一次性实施所有功能，适合有充足测试时间的情况。
+---
 
-## 风险点
+## 4. 变更流程建议（长期维护）
 
-1. **MinerU 依赖较大** (~GB级模型下载)
-   - 首次转换会很慢
-   - 建议预下载模型
+1) 先改文档（说明目的、影响范围、如何验证），再改代码  
+2) 改后端：优先补齐 `scripts/sdk_smoke_test.py` 覆盖用例或加小范围自测  
+3) 构建镜像并离线交付：参考 `OFFLINE_DEPLOYMENT.md` 的 export/import 流程  
 
-2. **数据库迁移需要停机**
-   - owner_id 需要为已有文档设置值
-   - 建议在低峰期执行
-
-3. **Milvus 分区重建**
-   - 已有向量数据需要重新索引到用户分区
-   - 需要编写迁移脚本
-
-## 下一步行动
-
-选择以下之一:
-
-A. **继续自动实施** - 我会逐步创建所有必要文件
-B. **手动实施** - 我提供具体代码，你手动创建
-C. **分阶段实施** - 每完成一个 Phase 就测试一次
-
-请告诉我你的选择！

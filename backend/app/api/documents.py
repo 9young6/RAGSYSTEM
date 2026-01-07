@@ -1,5 +1,28 @@
 from __future__ import annotations
 
+"""
+documents.py：文档与 chunk 的核心业务接口（FastAPI）。
+
+文档生命周期（用户视角）：
+1) 上传文件：`POST /documents/upload`
+   - 原始文件写入 MinIO：`user_{owner_id}/documents/...`
+   - 生成预览 preview_text（用于快速确认内容是否可解析）
+   - 触发/生成 Markdown：
+     - `md/txt/json/csv/xlsx/docx`：同步生成 Markdown + chunks（不依赖 celery）
+     - `pdf`：异步 Celery 任务（MinerU/magic-pdf -> fallback -> OCR）
+2) 等待 `markdown_ready` 后确认提交：`POST /documents/confirm/{id}`
+3) 管理员审核：`/review/*`（见 `backend/app/api/review.py`）
+
+chunk 设计：
+- chunks 永远存 Postgres（便于编辑与审核）；Milvus 只存向量（doc_id + chunk_index）
+- `included` 控制该 chunk 是否参与“最终入库”（索引到 Milvus）
+
+典型定制点（内网）：
+- 调整“哪些状态对谁可见”（`list_documents()` 的默认过滤）
+- 调整“确认提交/再提交”的规则（`confirm_document()`）
+- 调整默认 included 策略（`ChunkService.regenerate_document_chunks()`）
+"""
+
 import hashlib
 import logging
 import re
@@ -58,7 +81,7 @@ async def upload_document(
     db: Session = Depends(get_db),
 ) -> DocumentUploadResponse:
     """
-    Upload a document. Sets owner_id and triggers MinerU conversion.
+    上传文档：写入 MinIO + 创建 Document 记录，并开始生成 Markdown。
 
     Multi-tenant: Document belongs to the uploading user (owner_id).
     MinerU: Triggers async Markdown conversion task.
@@ -134,6 +157,7 @@ async def upload_document(
             try:
                 from app.services.chunk_service import ChunkService
 
+                # 直转 Markdown 的文件：立即生成 chunks，方便用户/管理员直接进入 chunk 级别管理。
                 ChunkService().regenerate_document_chunks(db, document_id=document.id, text=md_content)
             except Exception as exc:
                 logger.warning(f"Chunk generation failed for document {document.id}: {exc}")
@@ -169,7 +193,7 @@ def confirm_document(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> DocumentConfirmResponse:
-    """Confirm a document after reviewing its Markdown conversion"""
+    """确认提交：用户确认 Markdown 可用后，将文档推进到管理员审核队列。"""
     document = db.get(Document, document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
@@ -182,7 +206,9 @@ def confirm_document(
     if document.status not in {"uploaded", "rejected"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status for confirm")
 
-    # Only allow confirm after Markdown is ready (admin review should never see "waiting conversion").
+    # 只允许在 Markdown 已就绪后确认提交：
+    # - 避免管理员看到“待转换”的文档
+    # - 也避免入库内容与用户看到的 Markdown 不一致
     if document.markdown_status != "markdown_ready":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
