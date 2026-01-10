@@ -27,16 +27,17 @@ This repository provides a minimal, Docker-Compose-friendly RAG knowledge base s
 
 ## 功能概览
 - 文档上传：支持 `PDF/DOCX/XLSX/CSV/MD/TXT/JSON`（MinIO 保存原文件 + Postgres 保存元数据/分块）
-- 自动转 Markdown：`md/txt/json/csv/xlsx/docx` 直接生成；`pdf` 异步转换（失败可“开始/重试转换”）
+- 自动转 Markdown：`md/txt/json/csv/xlsx/docx` 直接生成；`pdf` 异步转换（失败可"开始/重试转换"）
 - 文档确认：上传者确认后进入待审核队列
 - 审核：管理员 approve/reject；approve 自动触发索引
 - 向量检索：Milvus 保存向量（document_id/chunk_index/embedding）
-- 问答：Ollama 生成（未下载模型时自动降级为“返回检索片段”）
-- Chunk 管理：查看/编辑/新增/删除 chunk，支持勾选“入库”与（已入库文档）重建向量
+- 问答：Ollama 生成（未下载模型时自动降级为"返回检索片段"）
+- Chunk 管理：查看/编辑/新增/删除 chunk，支持勾选"入库"与（已入库文档）重建向量
+- **Milvus 向量浏览**：3D 可视化向量空间分布，浏览所有 chunk 内容，支持搜索筛选和交互式探索
 - 用户级设置：默认模型/top_k/temperature、推理后端与连通性测试
-- 验收审查：上传报告→检索依据条款→生成固定格式“验收审查报告”
+- 验收审查：上传报告→检索依据条款→生成固定格式"验收审查报告"
 - 健康检查：`/api/v1/health` 检查 Postgres/Milvus/MinIO/Ollama（以及可选 Xinference）连通性
-- 前端页面：上传 / 审核 / 查询（静态页面，便于快速演示）
+- 前端页面：上传 / 审核 / 查询 / Milvus 管理（深色主题，响应式设计）
 
 ## 快速启动（Docker Compose）
 前置：Docker Desktop / Docker Compose v2
@@ -54,9 +55,10 @@ curl -s http://localhost:8001/api/v1/health
 > 说明：本仓库默认把后端映射为 `8001:8000`（避免宿主机 `8000` 端口冲突）。如需改回 8000，请改 `docker-compose.yml` 中 `backend.ports`。
 
 ## 访问入口
-- 前端页面：`http://localhost:3000`
-- Swagger 文档：`http://localhost:8001/docs`
-- ReDoc：`http://localhost:8001/redoc`
+- **主应用前端**：`http://localhost:3000` （上传/审核/查询/设置）
+- **Milvus 向量浏览**：`http://localhost:3000/milvus.html` （3D 可视化，Chunk 浏览）
+- **Swagger 文档**：`http://localhost:8001/docs`
+- **ReDoc**：`http://localhost:8001/redoc`
 
 默认情况下仅暴露 **前端/后端** 端口；如需在宿主机访问 MinIO 控制台/Milvus/Postgres 等，请自行在 `docker-compose.yml` 为对应服务补充 `ports` 映射。
 

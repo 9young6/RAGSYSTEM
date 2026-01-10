@@ -19,3 +19,10 @@ magic-pdf==0.7.1
 pdfplumber>=0.11.0
 opencv-python-headless==4.10.0.84
 pytesseract==0.3.10
+PyYAML>=6.0
+numpy>=1.24.0
+Pillow>=10.0.0
+grpcio>=1.60.0
+protobuf>=3.20.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
